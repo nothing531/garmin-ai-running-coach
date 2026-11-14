@@ -1,4 +1,4 @@
-import { computeEnvironmentalAdjustment, formatPace } from '../science/metrics.js';
+import { computeEnvironmentalAdjustment, formatPace, parsePaceSecPerKm } from '../science/metrics.js';
 
 const SYSTEM_PROMPT = `你是一位拥有运动生理学博士背景与世界级耐力教练经验的「私人 AI 跑步总教练」。
 你的理论基石是 Jack Daniels VDOT 体系、80/20 极化训练法（结合挪威阈值理念）与 Banister PMC 负荷模型。
@@ -54,10 +54,11 @@ export async function generateCoachPlan(context, config = {}) {
   const apiKey = (process.env.LLM_API_KEY || '').trim();
   if (!apiKey) {
     console.log('[Coach] LLM_API_KEY not set; using deterministic scientific plan engine.');
+    const plan = buildDeterministicCoachPlan(context, config);
     return {
       llmUsed: false,
-      model: 'deterministic-science-engine',
-      ...buildDeterministicCoachPlan(context, config)
+      model: plan.planSource === 'antigravity-custom-plan' ? 'antigravity-custom-plan' : 'deterministic-science-engine',
+      ...plan
     };
   }
 
@@ -217,10 +218,108 @@ function parseJsonRobust(rawText) {
 }
 
 /**
- * 确定性科学训练计划引擎（无 LLM_API_KEY 或离线 Demo 时也可完整生成 7 天分化课表）
+ * 将 config/custom-plan.json 中某天的定制课表归一化为标准内部模板
+ */
+function normalizeCustomDayTemplate(entry, defaults) {
+  const { paces, lthr, maxHr } = defaults;
+  const type = String(entry?.type || 'E').toUpperCase();
+  const typeDefaults = {
+    REST: { baseSec: paces.easyPaceSec, hrRange: '静息恢复', cadence: '--', rpe: '1-2/10', carbFactor: 0.4 },
+    STR: { baseSec: paces.easyPaceSec + 10, hrRange: `${Math.round(lthr * 0.72)}-${Math.round(lthr * 0.81)} bpm (Z1-Z2)`, cadence: '174-178 spm', rpe: '3/10', carbFactor: 0.6 },
+    E: { baseSec: paces.easyPaceSec, hrRange: `${Math.round(lthr * 0.75)}-${Math.round(lthr * 0.85)} bpm (Z2)`, cadence: '174-180 spm', rpe: '4/10', carbFactor: 0.7 },
+    LSD: { baseSec: paces.easyPaceSec - 8, hrRange: `${Math.round(lthr * 0.80)}-${Math.round(lthr * 0.90)} bpm (Z2-Z3下沿)`, cadence: '176-182 spm', rpe: '6/10', carbFactor: 1.2 },
+    M: { baseSec: paces.marathonPaceSec, hrRange: `${Math.round(lthr * 0.89)}-${Math.round(lthr * 0.95)} bpm (Z3-Z4)`, cadence: '180-186 spm', rpe: '6.5/10', carbFactor: 1.0 },
+    T: { baseSec: paces.thresholdPaceSec, hrRange: `${Math.round(lthr * 0.96)}-${Math.round(lthr * 1.01)} bpm (Z4)`, cadence: '182-186 spm', rpe: '7-8/10', carbFactor: 1.0 },
+    I: { baseSec: paces.intervalPaceSec, hrRange: `${Math.round(maxHr * 0.91)}-${Math.round(maxHr * 0.96)} bpm (Z5)`, cadence: '186-192 spm', rpe: '8.5/10', carbFactor: 1.0 },
+    R: { baseSec: paces.repPaceSec, hrRange: `${Math.round(maxHr * 0.92)}-${Math.round(maxHr * 0.98)} bpm (Z5)`, cadence: '190-196 spm', rpe: '9/10', carbFactor: 0.9 }
+  };
+  const fallback = typeDefaults[type] || typeDefaults.E;
+  const distanceKm = Number(entry?.plannedDistanceKm ?? (type === 'REST' ? 0 : 8));
+  const parsedPace = parsePaceSecPerKm(entry?.basePaceSecPerKm ?? entry?.basePace);
+  const baseSec = parsedPace ?? fallback.baseSec;
+  const durationMin = Number(
+    entry?.plannedDurationMin ??
+      (distanceKm > 0 ? Math.round((distanceKm * baseSec) / 60) : 25)
+  );
+  const estimatedTss = Number(
+    entry?.estimatedTss ??
+      Math.max(10, Math.round((durationMin / 60) * (type === 'I' || type === 'T' ? 78 : type === 'REST' ? 20 : 52)))
+  );
+
+  return {
+    type,
+    title: entry?.title || `定制课表 (${type})`,
+    distanceKm,
+    durationMin,
+    tss: estimatedTss,
+    baseSec,
+    hrRange: entry?.targetHr || fallback.hrRange,
+    cadence: entry?.targetCadence || fallback.cadence,
+    rpe: entry?.rpe || fallback.rpe,
+    warmup: entry?.warmup || (type === 'REST' ? '轻度关节活动' : '1.5–2km 轻松慢跑 + 动态激活'),
+    mainSetSummary: entry?.mainSetSummary || entry?.title || '按定制周期计划执行',
+    mainSetDetail: entry?.mainSetDetail || entry?.mainSetSummary || '按目标配速与心率区间稳步执行',
+    cooldown: entry?.cooldown || '慢走放松与下肢静态拉伸 10 分钟',
+    nutritionOverride: entry?.nutrition || null,
+    carbFactor: Number(entry?.carbFactor ?? fallback.carbFactor),
+    tip: entry?.coachTip || '来自 Antigravity 协同定制周期课表。',
+    allowReadinessOverride: entry?.allowReadinessOverride !== false,
+    isCustomPlan: true
+  };
+}
+
+/**
+ * 统一对当日课表（定制课表或科学模板）应用晨间红绿灯熔断与天气应急规则
+ */
+function applyDailyGuardrails(template, { isToday, readiness, adj, easyPaceSec, lthr }) {
+  let result = { ...template };
+  const canOverride = result.allowReadinessOverride !== false;
+
+  if (isToday && canOverride && readiness.light === 'red' && result.type !== 'REST') {
+    result = {
+      ...result,
+      type: 'REST',
+      title: `🔴 红灯熔断 · 原定「${result.title}」已切换为主动恢复`,
+      distanceKm: 0,
+      durationMin: 30,
+      tss: 15,
+      baseSec: easyPaceSec + 25,
+      hrRange: `< ${Math.round(lthr * 0.72)} bpm (Z1)`,
+      cadence: '步行/拉伸',
+      rpe: '2/10',
+      warmup: '5 分钟温水浴或全身关节温和绕环',
+      mainSetSummary: '强制取消今日跑步负荷，改为 25 分钟泡沫轴筋膜放松与呼吸恢复',
+      mainSetDetail: '今日生理指标触发红灯预警，严禁硬顶训练。执行：小腿比目鱼肌、足底筋膜、髂胫束滚压 + 腹式呼吸 10 分钟；若体感尚可仅允许 20 分钟超慢步行。',
+      cooldown: '23:00 前就寝保证 8 小时睡眠恢复',
+      nutritionOverride: null,
+      carbFactor: 0.4,
+      tip: `触发原因：${readiness.triggers.join('；')}`
+    };
+  } else if (isToday && canOverride && readiness.light === 'yellow' && ['T', 'I', 'R', 'LSD'].includes(result.type)) {
+    result = {
+      ...result,
+      title: `🟡 黄灯降级 · ${result.title} (减量 25%)`,
+      distanceKm: Math.round(result.distanceKm * 0.75 * 10) / 10,
+      durationMin: Math.round(result.durationMin * 0.75),
+      tss: Math.round(result.tss * 0.72),
+      rpe: '6/10',
+      mainSetSummary: `${result.mainSetSummary}（黄灯自动下调容量 25%）`,
+      tip: `黄灯提醒（${readiness.triggers.join('；')}）：严控心率上限，宁慢勿快`
+    };
+  }
+
+  if (adj.indoorRecommended && result.type !== 'REST' && result.type !== 'STR') {
+    result.mainSetDetail = `${result.mainSetDetail} 【天气熔断替代】当前预报空气质量/强对流不适宜户外，建议改至室内跑步机（设置 1.0% 坡度补偿风阻）完成等效时长训练。`;
+  }
+
+  return result;
+}
+
+/**
+ * 确定性科学训练计划引擎（支持优先读取 config/custom-plan.json 定制周期，并保留每日生理/环境自适应护栏）
  */
 export function buildDeterministicCoachPlan(context, config = {}) {
-  const { readiness, pmc, weeklyZones, wellness, envForecast, lastKeyWorkoutAudit } = context;
+  const { readiness, pmc, weeklyZones, wellness, envForecast, lastKeyWorkoutAudit, customPlan } = context;
   const weightKg = wellness?.weightKg || config.physiology?.weightKg || 66;
   const ltPace = config.physiology?.ltPaceSecPerKm || 265;
   const lthr = wellness?.lthrFromDevice || config.physiology?.lthr || 172;
@@ -255,7 +354,10 @@ export function buildDeterministicCoachPlan(context, config = {}) {
 
   const weekdayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
   const forecastDays = envForecast?.daily || [];
+  const customDaysMap = customPlan?.days && typeof customPlan.days === 'object' ? customPlan.days : {};
+  const paces = { easyPaceSec, marathonPaceSec, thresholdPaceSec, intervalPaceSec, repPaceSec };
   const days = [];
+  let customDayCount = 0;
 
   for (let i = 0; i < 7; i++) {
     const env = forecastDays[i] || null;
@@ -266,45 +368,22 @@ export function buildDeterministicCoachPlan(context, config = {}) {
     const adj = computeEnvironmentalAdjustment(env);
     const scale = 1 + (adj.slowdownPct || 0) / 100;
 
-    // 决定当日课表模板
-    let template = getTemplateForWeekday(dow, currentStage);
-
-    // 仅针对「今天 (i === 0)」触发晨间红绿灯动态调课
-    if (i === 0 && readiness.light === 'red' && template.type !== 'REST') {
-      template = {
-        type: 'REST',
-        title: '🔴 红灯熔断 · 主动恢复与筋膜放松',
-        distanceKm: 0,
-        durationMin: 30,
-        tss: 15,
-        baseSec: easyPaceSec + 25,
-        hrRange: `< ${Math.round(lthr * 0.72)} bpm (Z1)`,
-        cadence: '步行/拉伸',
-        rpe: '2/10',
-        warmup: '5 分钟温水浴或全身关节温和绕环',
-        mainSetSummary: '强制取消强度/跑量课，改为 25 分钟泡沫轴筋膜放松与呼吸恢复',
-        mainSetDetail: '今日生理指标触发红灯预警，严禁硬顶训练。执行：小腿比目鱼肌、足底筋膜、髂胫束滚压 + 腹式呼吸 10 分钟；若体感尚可仅允许 20 分钟超慢步行。',
-        cooldown: '23:00 前就寝保证 8 小时睡眠恢复',
-        carbFactor: 0.4,
-        tip: `触发原因：${readiness.triggers.join('；')}`
-      };
-    } else if (i === 0 && readiness.light === 'yellow' && ['T', 'I', 'R', 'LSD'].includes(template.type)) {
-      template = {
-        ...template,
-        title: `🟡 黄灯降级 · ${template.title} (减量 25%)`,
-        distanceKm: Math.round(template.distanceKm * 0.75 * 10) / 10,
-        durationMin: Math.round(template.durationMin * 0.75),
-        tss: Math.round(template.tss * 0.72),
-        rpe: '6/10',
-        mainSetSummary: `${template.mainSetSummary}（黄灯自动下调容量 25%）`,
-        tip: `黄灯提醒（${readiness.triggers.join('；')}）：严控心率上限，宁慢勿快`
-      };
+    // 优先采用 Antigravity 协同定制计划中的对应日期；无定制时回退至周期科学模板
+    const customEntry = customDaysMap[dateStr];
+    const baseTemplate = customEntry
+      ? normalizeCustomDayTemplate(customEntry, { paces, lthr, maxHr })
+      : { ...getTemplateForWeekday(dow, currentStage), isCustomPlan: false };
+    if (baseTemplate.isCustomPlan) {
+      customDayCount += 1;
     }
 
-    // 特殊天气（高 AQI / 雷暴）室内替代修正
-    if (adj.indoorRecommended && template.type !== 'REST' && template.type !== 'STR') {
-      template.mainSetDetail += ' 【天气熔断替代】当前预报空气质量/强对流不适宜户外，建议改至室内跑步机（设置 1.0% 坡度补偿风阻）完成等效时长训练。';
-    }
+    const template = applyDailyGuardrails(baseTemplate, {
+      isToday: i === 0,
+      readiness,
+      adj,
+      easyPaceSec,
+      lthr
+    });
 
     const basePaceStr = template.distanceKm > 0 ? `${formatPace(template.baseSec)}/km` : '--';
     const correctedSec = Math.round(template.baseSec * scale);
@@ -317,6 +396,7 @@ export function buildDeterministicCoachPlan(context, config = {}) {
     days.push({
       date: dateStr,
       weekday: weekdayNames[dow],
+      isCustomPlan: Boolean(template.isCustomPlan),
       type: template.type,
       title: template.title,
       plannedDistanceKm: template.distanceKm,
@@ -335,9 +415,10 @@ export function buildDeterministicCoachPlan(context, config = {}) {
       mainSetDetail: template.mainSetDetail,
       cooldown: template.cooldown,
       nutrition:
-        template.distanceKm > 0
+        template.nutritionOverride ||
+        (template.distanceKm > 0
           ? `跑后 30 分钟内补充碳水 ${carbG}g + 优质蛋白 ${proteinG}g，补水 ${Math.round(template.durationMin * 8)}ml（含电解质钠钾）`
-          : '全天保持均衡高蛋白饮食与充分补水（≥ 2000ml），促进肌糖原与神经系统超量恢复',
+          : '全天保持均衡高蛋白饮食与充分补水（≥ 2000ml），促进肌糖原与神经系统超量恢复'),
       coachTip: template.tip
     });
   }
@@ -490,28 +571,48 @@ export function buildDeterministicCoachPlan(context, config = {}) {
   }
 
   const dec = lastKeyWorkoutAudit?.decoupling;
-  const fitWorkoutCritique = dec
-    ? `最近重点长距离 (${lastKeyWorkoutAudit.activity?.name}) 有氧解耦率为 ${dec.decouplingPct}%（${dec.status === 'solid' ? '低于5%，有氧底座扎实' : '略偏高，后半程存在轻微热/疲劳漂移'}），平均步频 ${lastKeyWorkoutAudit.activity?.cadence || '--'} spm，整体配速控制稳定。`
-    : '当前样本暂无完整 .FIT 遥测记录，建议下次跑步保持心率带或手表紧贴佩戴，以采集更精确的步幅与解耦数据。';
+  const fitWorkoutCritique =
+    customPlan?.fitWorkoutCritique?.trim() ||
+    (dec
+      ? `最近重点长距离 (${lastKeyWorkoutAudit.activity?.name}) 有氧解耦率为 ${dec.decouplingPct}%（${dec.status === 'solid' ? '低于5%，有氧底座扎实' : '略偏高，后半程存在轻微热/疲劳漂移'}），平均步频 ${lastKeyWorkoutAudit.activity?.cadence || '--'} spm，整体配速控制稳定。`
+      : '当前样本暂无完整 .FIT 遥测记录，建议下次跑步保持心率带或手表紧贴佩戴，以采集更精确的步幅与解耦数据。');
 
-  const coachSummary = `当前处于【${stageDisplay}】，今日生理准备度 ${readiness.score}/100（${readiness.lightLabel}）。ACWR=${pmc.latest.acwr}、TSB=${pmc.latest.tsb}，近 8 周有氧低强度占比 ${weeklyZones.polarization.lowIntensityPct}%。${readiness.triggers.join('；')}。`;
+  const liveMetricsSummary = `当前处于【${customPlan?.macroPhase?.stageDisplay || stageDisplay}】，今日生理准备度 ${readiness.score}/100（${readiness.lightLabel}）。ACWR=${pmc.latest.acwr}、TSB=${pmc.latest.tsb}，近 8 周有氧低强度占比 ${weeklyZones.polarization.lowIntensityPct}%。${readiness.triggers.join('；')}。`;
+  const coachNotes = customPlan?.coachNotes?.trim();
+  const coachSummary = coachNotes
+    ? `${liveMetricsSummary} ｜ 【Antigravity 教练备忘 (${customPlan.updatedAt || '定制周期'})】${coachNotes}`
+    : liveMetricsSummary;
+
+  const defaultMacroPhase = {
+    currentStage,
+    stageDisplay,
+    weekFocus:
+      currentStage === 'Taper'
+        ? '保留神经肌肉敏锐度，削减 35% 跑量以充分超量恢复'
+        : '巩固 80/20 极化分布与有氧底座，稳步提升乳酸阈值速度',
+    nextDeloadInfo: '每 3 周负荷递增后安排 1 周减量周（跑量下调 30%，ACWR 回落至 0.85–1.05）',
+    stages: [
+      { key: 'Base', label: '基础有氧期', weeks: 'W1-W4', active: currentStage === 'Base' },
+      { key: 'Build', label: '专项强化期', weeks: 'W5-W9', active: currentStage === 'Build' },
+      { key: 'Peak', label: '巅峰转化期', weeks: 'W10-W12', active: currentStage === 'Peak' },
+      { key: 'Taper', label: '赛前减量期', weeks: 'W13-W14', active: currentStage === 'Taper' }
+    ]
+  };
+  const customMacro = customPlan?.macroPhase && typeof customPlan.macroPhase === 'object' ? customPlan.macroPhase : null;
+  const macroPhase = customMacro
+    ? {
+        ...defaultMacroPhase,
+        ...customMacro,
+        stages: Array.isArray(customMacro.stages) && customMacro.stages.length > 0 ? customMacro.stages : defaultMacroPhase.stages
+      }
+    : defaultMacroPhase;
+
+  const hasCustomContent = customDayCount > 0 || Boolean(coachNotes) || Boolean(customMacro);
 
   return {
-    macroPhase: {
-      currentStage,
-      stageDisplay,
-      weekFocus:
-        currentStage === 'Taper'
-          ? '保留神经肌肉敏锐度，削减 35% 跑量以充分超量恢复'
-          : '巩固 80/20 极化分布与有氧底座，稳步提升乳酸阈值速度',
-      nextDeloadInfo: '每 3 周负荷递增后安排 1 周减量周（跑量下调 30%，ACWR 回落至 0.85–1.05）',
-      stages: [
-        { key: 'Base', label: '基础有氧期', weeks: 'W1-W4', active: currentStage === 'Base' },
-        { key: 'Build', label: '专项强化期', weeks: 'W5-W9', active: currentStage === 'Build' },
-        { key: 'Peak', label: '巅峰转化期', weeks: 'W10-W12', active: currentStage === 'Peak' },
-        { key: 'Taper', label: '赛前减量期', weeks: 'W13-W14', active: currentStage === 'Taper' }
-      ]
-    },
+    planSource: hasCustomContent ? 'antigravity-custom-plan' : 'deterministic-science-engine',
+    customPlanUpdatedAt: customPlan?.updatedAt || null,
+    macroPhase,
     coachSummary,
     fitWorkoutCritique,
     days

@@ -4,6 +4,13 @@ on:
   schedule:
     # 每天 UTC 22:30 运行 = 北京时间 (UTC+8) 每天早上 06:30
     - cron: '30 22 * * *'
+  push:
+    branches:
+      - main
+    paths:
+      - 'config/**'
+      - 'src/**'
+      - '.github/workflows/daily-coach.yml'
   workflow_dispatch:
 
 permissions:

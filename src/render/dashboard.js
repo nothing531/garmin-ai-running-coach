@@ -88,6 +88,7 @@ export function renderDashboardHtml(payload) {
             <div class="flex items-center gap-2 flex-wrap">
               <span class="text-xs font-mono text-slate-400">${escapeHtml(day.date)} · ${escapeHtml(day.weekday)}</span>
               ${isToday ? '<span class="px-2 py-0.5 text-[11px] font-semibold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">TODAY 今日课表</span>' : ''}
+              ${day.isCustomPlan ? '<span class="px-2 py-0.5 text-[11px] font-semibold rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/40">Antigravity 定制</span>' : ''}
               <span class="px-2 py-0.5 text-[11px] font-medium rounded-full border ${style.badge}">${escapeHtml(style.label)}</span>
             </div>
             <h3 class="mt-2 text-lg font-semibold text-white">${escapeHtml(day.title)}</h3>
@@ -192,7 +193,14 @@ export function renderDashboardHtml(payload) {
           目标：${escapeHtml(config.goal?.eventName || '科学跑步进阶')} (${escapeHtml(config.goal?.targetTime || '--')}) · 城市：${escapeHtml(envForecast?.location?.city || config.location?.cityDisplay || '')} · 数据源：${escapeHtml(dataSource)}
         </p>
       </div>
-      <div class="flex items-center gap-2 text-xs font-mono text-slate-400">
+      <div class="flex items-center gap-2 text-xs font-mono text-slate-400 flex-wrap">
+        <span class="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800">${
+          coachPlan?.planSource === 'antigravity-custom-plan'
+            ? 'Antigravity 定制周期'
+            : coachPlan?.llmUsed
+              ? `LLM: ${escapeHtml(coachPlan.model)}`
+              : '科学引擎排课'
+        }</span>
         <span class="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800">更新于 ${escapeHtml(generatedAt)}</span>
       </div>
     </header>

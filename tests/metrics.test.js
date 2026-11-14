@@ -5,7 +5,8 @@ import {
   computeEnvironmentalAdjustment,
   computePmcSeries,
   computeWeeklyAndZones,
-  evaluateReadiness
+  evaluateReadiness,
+  parsePaceSecPerKm
 } from '../src/science/metrics.js';
 import { buildDeterministicCoachPlan } from '../src/coach/planner.js';
 import { renderDashboardHtml } from '../src/render/dashboard.js';
@@ -120,4 +121,89 @@ test('deterministic coach plan and HTML dashboard render safely', () => {
   assert.ok(html.includes('AI Running Coach'));
   assert.ok(html.includes('pmcChart'));
   assert.ok(html.includes('红灯'));
+});
+
+test('parsePaceSecPerKm parses pace strings and numbers cleanly', () => {
+  assert.equal(parsePaceSecPerKm('5:30/km'), 330);
+  assert.equal(parsePaceSecPerKm('4:05'), 245);
+  assert.equal(parsePaceSecPerKm(265), 265);
+  assert.equal(parsePaceSecPerKm('--:--'), null);
+});
+
+test('customPlan applies Antigravity cycle schedule while retaining readiness and weather guardrails', () => {
+  const config = {
+    region: 'cn',
+    goal: { eventName: '半马PB', targetTime: '01:35:00', raceDate: '2027-03-21' },
+    physiology: { maxHr: 190, restingHrBaseline: 50, lthr: 172, ltPaceSecPerKm: 265, weightKg: 66 }
+  };
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const tomorrowStr = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
+  const customPlan = {
+    updatedAt: todayStr,
+    coachNotes: '本周左小腿紧绷，周中阈值减量观察',
+    days: {
+      [todayStr]: {
+        type: 'T',
+        title: '定制阈值巡航 3x2km',
+        plannedDistanceKm: 10,
+        basePace: '4:30/km',
+        mainSetSummary: '3 x 2000m @ 4:30'
+      },
+      [tomorrowStr]: {
+        type: 'E',
+        title: '定制轻松有氧恢复 8km',
+        plannedDistanceKm: 8,
+        basePace: '5:30/km',
+        mainSetSummary: '8km 纯 Zone 2 对话跑'
+      }
+    }
+  };
+
+  const greenWellness = { hrvToday: 65, hrv7dAvg: 60, sleepScore: 86, bodyBatteryMorning: 88, rhrToday: 49, rhr7dAvg: 50 };
+  const redWellness = { hrvToday: 38, hrv7dAvg: 60, sleepScore: 55, bodyBatteryMorning: 40, rhrToday: 57, rhr7dAvg: 50 };
+  const pmc = computePmcSeries([], config.physiology, 14);
+  const weeklyZones = computeWeeklyAndZones([], config.physiology);
+  const envDays = [
+    { date: todayStr, weatherText: '晴朗', tempC: 15, humidityPct: 50, dewPointC: 5, windMs: 2, usAqi: 40, elevationMeters: 45 },
+    { date: tomorrowStr, weatherText: '高温微风', tempC: 28, humidityPct: 60, dewPointC: 20, windMs: 2, usAqi: 40, elevationMeters: 1800 }
+  ];
+
+  // 绿灯时：保留今天定制课表 + 明天高温海拔环境降速修正
+  const greenPlan = buildDeterministicCoachPlan(
+    {
+      readiness: evaluateReadiness(greenWellness, pmc.latest),
+      pmc,
+      weeklyZones,
+      wellness: greenWellness,
+      envForecast: { daily: envDays },
+      lastKeyWorkoutAudit: null,
+      customPlan
+    },
+    config
+  );
+
+  assert.equal(greenPlan.planSource, 'antigravity-custom-plan');
+  assert.ok(greenPlan.coachSummary.includes('本周左小腿紧绷'));
+  assert.equal(greenPlan.days[0].isCustomPlan, true);
+  assert.equal(greenPlan.days[0].title, '定制阈值巡航 3x2km');
+  assert.equal(greenPlan.days[0].basePace, '4:30/km');
+  assert.equal(greenPlan.days[1].isCustomPlan, true);
+  assert.equal(greenPlan.days[1].basePace, '5:30/km');
+  assert.notEqual(greenPlan.days[1].correctedPace, '5:30/km'); // 海拔+高温自动慢修
+
+  // 红灯时：即使有定制阈值课表，仍安全熔断保护
+  const redPlan = buildDeterministicCoachPlan(
+    {
+      readiness: evaluateReadiness(redWellness, pmc.latest),
+      pmc,
+      weeklyZones,
+      wellness: redWellness,
+      envForecast: { daily: envDays },
+      lastKeyWorkoutAudit: null,
+      customPlan
+    },
+    config
+  );
+  assert.equal(redPlan.days[0].type, 'REST');
+  assert.ok(redPlan.days[0].title.includes('红灯熔断'));
 });

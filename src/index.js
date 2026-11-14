@@ -39,12 +39,26 @@ async function loadDotEnv() {
   }
 }
 
+async function loadCustomPlan() {
+  const customPlanPath = path.join(ROOT_DIR, 'config', 'custom-plan.json');
+  try {
+    const raw = await fs.readFile(customPlanPath, 'utf8');
+    return JSON.parse(raw);
+  } catch (err) {
+    if (err?.code !== 'ENOENT') {
+      console.warn(`[Coach] Failed to load config/custom-plan.json (${err.message}); falling back to template plan.`);
+    }
+    return null;
+  }
+}
+
 async function main() {
   await loadDotEnv();
   const isDemo = process.argv.includes('--demo');
 
   const configPath = path.join(ROOT_DIR, 'config', 'runner.config.json');
   const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
+  const customPlan = await loadCustomPlan();
 
   console.log(`[1/5] Loading Garmin telemetry (${isDemo ? 'DEMO mode' : config.region})...`);
   const garmin = isDemo ? generateDemoTelemetry(config) : await fetchGarminData(config);
@@ -114,7 +128,8 @@ async function main() {
       weeklyZones,
       wellness: garmin.wellness,
       envForecast,
-      lastKeyWorkoutAudit: garmin.lastKeyWorkoutAudit
+      lastKeyWorkoutAudit: garmin.lastKeyWorkoutAudit,
+      customPlan
     },
     config
   );

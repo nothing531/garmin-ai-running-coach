@@ -15,6 +15,22 @@ export function formatPace(secPerKm) {
   return `${mins}:${String(secs).padStart(2, '0')}`;
 }
 
+/**
+ * 解析配速（支持数字秒数或 "5:30" / "5:30/km" 字符串）为秒/公里
+ */
+export function parsePaceSecPerKm(value) {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.round(value);
+  }
+  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const mins = Number(match[1]);
+  const secs = Number(match[2]);
+  if (!Number.isFinite(mins) || !Number.isFinite(secs) || secs >= 60) return null;
+  const total = mins * 60 + secs;
+  return total > 0 ? total : null;
+}
+
 export function cToF(c) {
   return (c * 9) / 5 + 32;
 }
