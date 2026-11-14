@@ -83,36 +83,37 @@ export function computePmcSeries(activities, physiology = {}, days = 56) {
     dailyMap.set(date, (dailyMap.get(date) || 0) + load);
   }
 
-  const today = new Date();
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayUtc = new Date(`${todayIso}T12:00:00Z`);
+  const start = new Date(todayUtc);
+  start.setUTCDate(todayUtc.getUTCDate() - (days - 1));
+
+  // 从展示窗口前 180 天零基线自然递推 CTL/ATL，避免陈旧历史训练虚增当前体能
+  const warmupDays = 180;
+  const simStart = new Date(start);
+  simStart.setUTCDate(start.getUTCDate() - warmupDays);
+
   const series = [];
-  let ctl = 35; // 合理初始冷启动基线，避免初期 ACWR 虚高失真
-  let atl = 35;
-
-  // 若历史记录有数据，先用前7天均值冷启动 CTL/ATL
-  const sortedDates = Array.from(dailyMap.keys()).sort();
-  if (sortedDates.length > 0) {
-    const earlySum = sortedDates.slice(0, 7).reduce((acc, d) => acc + dailyMap.get(d), 0);
-    const seed = Math.max(15, Math.min(80, earlySum / 7));
-    ctl = seed;
-    atl = seed;
-  }
-
-  const start = new Date(today);
-  start.setDate(today.getDate() - (days - 1));
+  let ctl = 0;
+  let atl = 0;
 
   const kCtl = 1 / 42;
   const kAtl = 1 / 7;
+  const totalSimDays = warmupDays + days;
 
-  for (let i = 0; i < days; i++) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
+  for (let i = 0; i < totalSimDays; i++) {
+    const d = new Date(simStart);
+    d.setUTCDate(simStart.getUTCDate() + i);
     const iso = d.toISOString().slice(0, 10);
     const tss = Math.round((dailyMap.get(iso) || 0) * 10) / 10;
 
     ctl = ctl + (tss - ctl) * kCtl;
     atl = atl + (tss - atl) * kAtl;
+
+    if (i < warmupDays) continue;
+
     const tsb = ctl - atl;
-    const acwr = ctl > 1 ? atl / ctl : 1;
+    const acwr = ctl > 1 ? atl / ctl : (atl > 0 ? 1 : 0);
 
     series.push({
       date: iso,
@@ -128,7 +129,7 @@ export function computePmcSeries(activities, physiology = {}, days = 56) {
     ctl: 0,
     atl: 0,
     tsb: 0,
-    acwr: 1
+    acwr: 0
   };
 
   return {
@@ -178,7 +179,7 @@ export function computeAerobicDecoupling(records) {
 }
 
 /**
- * 统计近 6 周按周跑量 & 80/20 心率区间分布
+ * 统计近 8 个自然周按周跑量 & 80/20 心率区间分布
  */
 export function computeWeeklyAndZones(activities, physiology = {}) {
   const maxHr = physiology.maxHr || 190;
@@ -196,29 +197,48 @@ export function computeWeeklyAndZones(activities, physiology = {}) {
   const zoneSeconds = [0, 0, 0, 0, 0];
   const weekBuckets = new Map();
 
-  for (const act of activities) {
-    if (!act.isRun) continue;
-    const d = new Date(act.date);
-    if (Number.isNaN(d.getTime())) continue;
-    // 对齐到周一作为 weekKey
-    const day = d.getDay();
-    const diffToMon = (day + 6) % 7;
-    const mon = new Date(d);
-    mon.setDate(d.getDate() - diffToMon);
-    const weekKey = mon.toISOString().slice(0, 10);
+  // 严格锚定截至本周的最近 8 个自然周（按周一对齐），无记录周补 0
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayUtc = new Date(`${todayIso}T12:00:00Z`);
+  const diffToCurrentMon = (todayUtc.getUTCDay() + 6) % 7;
+  const currentMon = new Date(todayUtc);
+  currentMon.setUTCDate(todayUtc.getUTCDate() - diffToCurrentMon);
 
-    const bucket = weekBuckets.get(weekKey) || {
+  const recentWeekKeys = [];
+  for (let w = 7; w >= 0; w--) {
+    const mon = new Date(currentMon);
+    mon.setUTCDate(currentMon.getUTCDate() - w * 7);
+    const weekKey = mon.toISOString().slice(0, 10);
+    recentWeekKeys.push(weekKey);
+    weekBuckets.set(weekKey, {
       weekStart: weekKey,
       distanceKm: 0,
       durationMin: 0,
       elevationGainM: 0,
       sessions: 0
-    };
+    });
+  }
+
+  for (const act of activities) {
+    if (!act.isRun) continue;
+    const dateStr = String(act.date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue;
+    const d = new Date(`${dateStr}T12:00:00Z`);
+    if (Number.isNaN(d.getTime())) continue;
+    // 对齐到周一作为 weekKey
+    const diffToMon = (d.getUTCDay() + 6) % 7;
+    const mon = new Date(d);
+    mon.setUTCDate(d.getUTCDate() - diffToMon);
+    const weekKey = mon.toISOString().slice(0, 10);
+
+    // 仅统计最近 8 个自然周内的训练（同时过滤跨年/过往历史）
+    if (!weekBuckets.has(weekKey)) continue;
+
+    const bucket = weekBuckets.get(weekKey);
     bucket.distanceKm += (act.distanceMeters || 0) / 1000;
     bucket.durationMin += (act.durationSec || 0) / 60;
     bucket.elevationGainM += act.elevationGainM || 0;
     bucket.sessions += 1;
-    weekBuckets.set(weekKey, bucket);
 
     // 优先使用自带分Zone时长，否则按平均心率估算归类
     if (Array.isArray(act.hrZonesSec) && act.hrZonesSec.length === 5) {
@@ -242,15 +262,15 @@ export function computeWeeklyAndZones(activities, physiology = {}) {
   const thresholdGrayPct = Math.round((zoneSeconds[2] / totalZoneSec) * 1000) / 10;
   const highIntensityPct = Math.round(((zoneSeconds[3] + zoneSeconds[4]) / totalZoneSec) * 1000) / 10;
 
-  const weekly = Array.from(weekBuckets.values())
-    .sort((a, b) => a.weekStart.localeCompare(b.weekStart))
-    .slice(-8)
-    .map((w) => ({
+  const weekly = recentWeekKeys.map((weekKey) => {
+    const w = weekBuckets.get(weekKey);
+    return {
       ...w,
       distanceKm: Math.round(w.distanceKm * 10) / 10,
       durationMin: Math.round(w.durationMin),
       elevationGainM: Math.round(w.elevationGainM)
-    }));
+    };
+  });
 
   return {
     weekly,

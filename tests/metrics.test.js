@@ -207,3 +207,53 @@ test('customPlan applies Antigravity cycle schedule while retaining readiness an
   assert.equal(redPlan.days[0].type, 'REST');
   assert.ok(redPlan.days[0].title.includes('红灯熔断'));
 });
+
+test('陈旧历史跑步记录不应混入近8周跑量、区间分布或虚增当前 CTL/ATL', () => {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const oldActivities = [
+    {
+      date: '2025-07-07',
+      durationSec: 5400,
+      distanceMeters: 18600,
+      averageHr: 162,
+      isRun: true
+    },
+    {
+      date: '2026-03-09',
+      durationSec: 1500,
+      distanceMeters: 4010,
+      averageHr: 158,
+      isRun: true
+    }
+  ];
+
+  const weeklyZonesEmpty = computeWeeklyAndZones(oldActivities, { maxHr: 203, lthr: 183 });
+  assert.equal(weeklyZonesEmpty.weekly.length, 8);
+  assert.ok(weeklyZonesEmpty.weekly.every((w) => w.distanceKm === 0 && w.sessions === 0));
+  assert.equal(weeklyZonesEmpty.polarization.lowIntensityPct, 0);
+  assert.deepEqual(weeklyZonesEmpty.zonePercentages, [0, 0, 0, 0, 0]);
+
+  const pmcEmpty = computePmcSeries(oldActivities, { maxHr: 203, lthr: 183 }, 56);
+  assert.equal(pmcEmpty.latest.ctl, 0);
+  assert.equal(pmcEmpty.latest.atl, 0);
+  assert.equal(pmcEmpty.latest.tsb, 0);
+  assert.equal(pmcEmpty.latest.acwr, 0);
+
+  // 当存在本周近期记录与 2025 年陈旧记录混合时，仅统计近 8 周内的训练
+  const mixedActivities = [
+    ...oldActivities,
+    {
+      date: todayIso,
+      durationSec: 1800,
+      distanceMeters: 5000,
+      averageHr: 150,
+      isRun: true
+    }
+  ];
+  const weeklyZonesMixed = computeWeeklyAndZones(mixedActivities, { maxHr: 203, lthr: 183 });
+  assert.equal(weeklyZonesMixed.weekly.length, 8);
+  assert.equal(weeklyZonesMixed.weekly[7].distanceKm, 5);
+  assert.equal(weeklyZonesMixed.weekly[7].sessions, 1);
+  assert.ok(weeklyZonesMixed.weekly.slice(0, 7).every((w) => w.distanceKm === 0));
+  assert.equal(weeklyZonesMixed.polarization.lowIntensityPct, 100);
+});
