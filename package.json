@@ -6,6 +6,7 @@
   "scripts": {
     "coach": "node src/index.js",
     "demo": "node src/index.js --demo",
+    "sync-workouts": "node scripts/sync-workouts.js",
     "check": "node scripts/setup-check.js",
     "test": "node --test tests"
   },

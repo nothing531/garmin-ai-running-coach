@@ -8,7 +8,11 @@ import {
 import GarminConnectModule from '@likenttt/garmin-connect';
 import { parseGarminFitZip } from './fitDecoder.js';
 
-const GarminConnect = GarminConnectModule.default || GarminConnectModule;
+const GarminConnect =
+  GarminConnectModule.GarminConnect ||
+  GarminConnectModule.default?.GarminConnect ||
+  GarminConnectModule.default ||
+  GarminConnectModule;
 
 function isoDateOffset(daysAgo = 0) {
   const d = new Date();

@@ -12,6 +12,7 @@ import {
 import { generateCoachPlan } from './coach/planner.js';
 import { renderDashboardHtml } from './render/dashboard.js';
 import { sendNotifications } from './notify/push.js';
+import { syncCoachWorkoutsToGarmin } from './garmin/workoutSync.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -167,6 +168,30 @@ async function main() {
     const pushResults = await sendNotifications(payload, process.env.DASHBOARD_URL || '');
     if (pushResults.length > 0) {
       console.log('[Notify] Push results:', JSON.stringify(pushResults));
+    }
+  }
+
+  const shouldSyncWorkouts =
+    !isDemo &&
+    (process.argv.includes('--sync-workouts') ||
+      String(process.env.GARMIN_SYNC_WORKOUTS || '').toLowerCase() === 'true');
+
+  if (shouldSyncWorkouts) {
+    try {
+      const syncResult = await syncCoachWorkoutsToGarmin(coachPlan, {
+        days: Number(process.env.GARMIN_SYNC_DAYS || 5),
+        auth: {
+          region: config.region || 'cn',
+          email: process.env.GARMIN_EMAIL,
+          password: process.env.GARMIN_PASSWORD,
+          sessionJson: process.env.GARMIN_SESSION_JSON
+        }
+      });
+      console.log(
+        `[GarminSync] Synced ${syncResult.synced.length} workout(s), deleted ${syncResult.deletedCount} stale.`
+      );
+    } catch (err) {
+      console.warn(`[GarminSync] Workout sync skipped/failed: ${err.message}`);
     }
   }
 
