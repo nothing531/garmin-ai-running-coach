@@ -1,0 +1,40 @@
+{
+  "runnerName": "Runner",
+  "region": "cn",
+  "timezone": "Asia/Shanghai",
+  "location": {
+    "city": null,
+    "cityDisplay": null,
+    "latitude": null,
+    "longitude": null,
+    "elevationMeters": null
+  },
+  "schedule": {
+    "preferredRunHour": 6,
+    "weeklyRunDays": 5,
+    "longRunWeekday": 0,
+    "qualityDays": [2, 4],
+    "maxWeekdayMinutes": 75,
+    "maxLongRunMinutes": 160
+  },
+  "goal": {
+    "eventName": "半程马拉松个人 PB 挑战赛",
+    "distanceKm": 21.0975,
+    "targetTime": "01:35:00",
+    "raceDate": "2027-03-21",
+    "injuryNotes": "无明显伤病，注意左小腿比目鱼肌与足底筋膜负荷控制"
+  },
+  "physiology": {
+    "maxHr": 190,
+    "restingHrBaseline": 50,
+    "lthr": 172,
+    "ltPaceSecPerKm": 265,
+    "weightKg": 66
+  },
+  "llm": {
+    "provider": "openai_compatible",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "model": "deepseek-chat",
+    "temperature": 0.3
+  }
+}

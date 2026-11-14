@@ -1,0 +1,21 @@
+{
+  "name": "garmin-ai-running-coach",
+  "version": "1.0.0",
+  "description": "Automated AI Running Coach powered by Garmin Connect API, Open-Meteo Weather/Elevation, and GitHub Actions + Pages",
+  "type": "module",
+  "scripts": {
+    "coach": "node src/index.js",
+    "demo": "node src/index.js --demo",
+    "check": "node scripts/setup-check.js",
+    "test": "node --test tests"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@likenttt/connect-personal-api-ts": "^0.1.0",
+    "@likenttt/garmin-connect": "^1.7.0",
+    "adm-zip": "^0.6.1",
+    "fit-file-parser": "^6.2.9"
+  }
+}

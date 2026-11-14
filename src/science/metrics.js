@@ -1,0 +1,360 @@
+/**
+ * 运动生理学与训练科学计算引擎
+ * - Banister PMC (CTL 42d / ATL 7d / TSB / ACWR)
+ * - 有氧解耦率 (Aerobic Decoupling Pa:Hr)
+ * - 心率区间分布 (80/20 Polarization)
+ * - 晨间红绿灯自适应机制 (Traffic Light Readiness)
+ * - 天气露点 / 海拔 / 风速 / AQI 环境配速修正
+ */
+
+export function formatPace(secPerKm) {
+  if (!Number.isFinite(secPerKm) || secPerKm <= 0) return '--:--';
+  const rounded = Math.round(secPerKm);
+  const mins = Math.floor(rounded / 60);
+  const secs = rounded % 60;
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
+export function cToF(c) {
+  return (c * 9) / 5 + 32;
+}
+
+/**
+ * 估算单次跑步的相对训练负荷 (rTSS / hrTSS 近似模型)
+ */
+export function estimateSessionLoad(activity, physiology = {}) {
+  const durationSec = Number(activity.durationSec || activity.movingDurationSec || 0);
+  if (durationSec <= 0) return 0;
+
+  const durationHours = durationSec / 3600;
+  const maxHr = physiology.maxHr || 190;
+  const rhr = physiology.restingHrBaseline || 50;
+  const lthr = physiology.lthr || Math.round(rhr + (maxHr - rhr) * 0.85);
+  const avgHr = Number(activity.averageHr || 0);
+
+  // 优先基于心率储备与 LTHR 估算 hrTSS
+  if (avgHr > rhr && lthr > rhr) {
+    const hrr = Math.min(1.05, Math.max(0.25, (avgHr - rhr) / (maxHr - rhr)));
+    const ltHrr = Math.max(0.5, (lthr - rhr) / (maxHr - rhr));
+    const intensityFactor = hrr / ltHrr;
+    const tss = durationHours * intensityFactor * intensityFactor * 100;
+    return Math.round(tss * 10) / 10;
+  }
+
+  // 无心率数据时，基于速度与阈值配速估算 rTSS
+  const distM = Number(activity.distanceMeters || 0);
+  const ltPace = physiology.ltPaceSecPerKm || 270;
+  if (distM > 0) {
+    const paceSec = durationSec / (distM / 1000);
+    const intensityFactor = Math.min(1.15, Math.max(0.45, ltPace / paceSec));
+    return Math.round(durationHours * intensityFactor * intensityFactor * 100 * 10) / 10;
+  }
+
+  // 力量训练 / 交叉训练按中等强度系数估算
+  return Math.round(durationHours * 45 * 10) / 10;
+}
+
+/**
+ * 构建 Banister PMC 模型 (CTL 42天慢性负荷, ATL 7天急性负荷, TSB 状态平衡, ACWR)
+ */
+export function computePmcSeries(activities, physiology = {}, days = 56) {
+  const dailyMap = new Map();
+
+  for (const act of activities) {
+    const date = String(act.date || '').slice(0, 10);
+    if (!date) continue;
+    const load = estimateSessionLoad(act, physiology);
+    dailyMap.set(date, (dailyMap.get(date) || 0) + load);
+  }
+
+  const today = new Date();
+  const series = [];
+  let ctl = 35; // 合理初始冷启动基线，避免初期 ACWR 虚高失真
+  let atl = 35;
+
+  // 若历史记录有数据，先用前7天均值冷启动 CTL/ATL
+  const sortedDates = Array.from(dailyMap.keys()).sort();
+  if (sortedDates.length > 0) {
+    const earlySum = sortedDates.slice(0, 7).reduce((acc, d) => acc + dailyMap.get(d), 0);
+    const seed = Math.max(15, Math.min(80, earlySum / 7));
+    ctl = seed;
+    atl = seed;
+  }
+
+  const start = new Date(today);
+  start.setDate(today.getDate() - (days - 1));
+
+  const kCtl = 1 / 42;
+  const kAtl = 1 / 7;
+
+  for (let i = 0; i < days; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    const iso = d.toISOString().slice(0, 10);
+    const tss = Math.round((dailyMap.get(iso) || 0) * 10) / 10;
+
+    ctl = ctl + (tss - ctl) * kCtl;
+    atl = atl + (tss - atl) * kAtl;
+    const tsb = ctl - atl;
+    const acwr = ctl > 1 ? atl / ctl : 1;
+
+    series.push({
+      date: iso,
+      tss,
+      ctl: Math.round(ctl * 10) / 10,
+      atl: Math.round(atl * 10) / 10,
+      tsb: Math.round(tsb * 10) / 10,
+      acwr: Math.round(acwr * 100) / 100
+    });
+  }
+
+  const latest = series[series.length - 1] || {
+    ctl: 0,
+    atl: 0,
+    tsb: 0,
+    acwr: 1
+  };
+
+  return {
+    series,
+    latest
+  };
+}
+
+/**
+ * 基于 .FIT 逐秒记录流计算有氧解耦率 (Aerobic Decoupling Pa:Hr)
+ * @param {Array<{speedMs: number, hr: number}>} records
+ */
+export function computeAerobicDecoupling(records) {
+  if (!Array.isArray(records) || records.length < 40) return null;
+
+  const valid = records.filter(
+    (r) => Number.isFinite(r.speedMs) && r.speedMs > 1.0 && Number.isFinite(r.hr) && r.hr > 60
+  );
+  if (valid.length < 40) return null;
+
+  // 跳过前 5 分钟（近似前 10% 热身段），避免热身期心率爬坡干扰
+  const startIdx = Math.floor(valid.length * 0.1);
+  const steady = valid.slice(startIdx);
+  if (steady.length < 30) return null;
+
+  const mid = Math.floor(steady.length / 2);
+  const firstHalf = steady.slice(0, mid);
+  const secondHalf = steady.slice(mid);
+
+  const avgEf = (arr) => {
+    const sumSpeed = arr.reduce((s, r) => s + r.speedMs, 0);
+    const sumHr = arr.reduce((s, r) => s + r.hr, 0);
+    return sumHr > 0 ? sumSpeed / sumHr : 0;
+  };
+
+  const ef1 = avgEf(firstHalf);
+  const ef2 = avgEf(secondHalf);
+  if (ef1 <= 0) return null;
+
+  const decouplingPct = ((ef1 - ef2) / ef1) * 100;
+  return {
+    decouplingPct: Math.round(decouplingPct * 100) / 100,
+    firstHalfEf: Math.round(ef1 * 10000) / 10000,
+    secondHalfEf: Math.round(ef2 * 10000) / 10000,
+    status: decouplingPct <= 5 ? 'solid' : decouplingPct <= 8 ? 'mild_drift' : 'high_drift'
+  };
+}
+
+/**
+ * 统计近 6 周按周跑量 & 80/20 心率区间分布
+ */
+export function computeWeeklyAndZones(activities, physiology = {}) {
+  const maxHr = physiology.maxHr || 190;
+  const rhr = physiology.restingHrBaseline || 50;
+  const lthr = physiology.lthr || Math.round(rhr + (maxHr - rhr) * 0.85);
+
+  // 5-Zone 基于 LTHR 模型 (Joe Friel / Garmin)
+  const zBoundaries = [
+    Math.round(lthr * 0.81), // Z1 上限
+    Math.round(lthr * 0.89), // Z2 上限
+    Math.round(lthr * 0.93), // Z3 上限
+    Math.round(lthr * 0.99)  // Z4 上限 (以上为 Z5)
+  ];
+
+  const zoneSeconds = [0, 0, 0, 0, 0];
+  const weekBuckets = new Map();
+
+  for (const act of activities) {
+    if (!act.isRun) continue;
+    const d = new Date(act.date);
+    if (Number.isNaN(d.getTime())) continue;
+    // 对齐到周一作为 weekKey
+    const day = d.getDay();
+    const diffToMon = (day + 6) % 7;
+    const mon = new Date(d);
+    mon.setDate(d.getDate() - diffToMon);
+    const weekKey = mon.toISOString().slice(0, 10);
+
+    const bucket = weekBuckets.get(weekKey) || {
+      weekStart: weekKey,
+      distanceKm: 0,
+      durationMin: 0,
+      elevationGainM: 0,
+      sessions: 0
+    };
+    bucket.distanceKm += (act.distanceMeters || 0) / 1000;
+    bucket.durationMin += (act.durationSec || 0) / 60;
+    bucket.elevationGainM += act.elevationGainM || 0;
+    bucket.sessions += 1;
+    weekBuckets.set(weekKey, bucket);
+
+    // 优先使用自带分Zone时长，否则按平均心率估算归类
+    if (Array.isArray(act.hrZonesSec) && act.hrZonesSec.length === 5) {
+      for (let i = 0; i < 5; i++) {
+        zoneSeconds[i] += act.hrZonesSec[i] || 0;
+      }
+    } else if (act.averageHr && act.durationSec) {
+      const hr = act.averageHr;
+      let zIdx = 4;
+      if (hr <= zBoundaries[0]) zIdx = 0;
+      else if (hr <= zBoundaries[1]) zIdx = 1;
+      else if (hr <= zBoundaries[2]) zIdx = 2;
+      else if (hr <= zBoundaries[3]) zIdx = 3;
+      zoneSeconds[zIdx] += act.durationSec;
+    }
+  }
+
+  const totalZoneSec = zoneSeconds.reduce((a, b) => a + b, 0) || 1;
+  const zonePercentages = zoneSeconds.map((s) => Math.round((s / totalZoneSec) * 1000) / 10);
+  const lowIntensityPct = Math.round(((zoneSeconds[0] + zoneSeconds[1]) / totalZoneSec) * 1000) / 10;
+  const thresholdGrayPct = Math.round((zoneSeconds[2] / totalZoneSec) * 1000) / 10;
+  const highIntensityPct = Math.round(((zoneSeconds[3] + zoneSeconds[4]) / totalZoneSec) * 1000) / 10;
+
+  const weekly = Array.from(weekBuckets.values())
+    .sort((a, b) => a.weekStart.localeCompare(b.weekStart))
+    .slice(-8)
+    .map((w) => ({
+      ...w,
+      distanceKm: Math.round(w.distanceKm * 10) / 10,
+      durationMin: Math.round(w.durationMin),
+      elevationGainM: Math.round(w.elevationGainM)
+    }));
+
+  return {
+    weekly,
+    zoneBoundaries: zBoundaries,
+    zonePercentages,
+    polarization: {
+      lowIntensityPct,
+      grayZonePct: thresholdGrayPct,
+      highIntensityPct,
+      isPolarized: lowIntensityPct >= 75 && thresholdGrayPct <= 15
+    }
+  };
+}
+
+/**
+ * 计算当天环境的配速修正系数 (温度+露点, 海拔, 风速, AQI)
+ */
+export function computeEnvironmentalAdjustment(envDay) {
+  if (!envDay) {
+    return {
+      slowdownPct: 0,
+      heatIndexSumF: null,
+      altitudePct: 0,
+      windWarning: false,
+      indoorRecommended: false,
+      summary: '环境温和，按基准配速执行'
+    };
+  }
+
+  const tempF = cToF(envDay.tempC ?? 18);
+  const dewF = cToF(envDay.dewPointC ?? 10);
+  const heatSum = Math.round(tempF + dewF);
+
+  let heatPct = 0;
+  if (heatSum > 140) heatPct = 5.0;
+  else if (heatSum > 130) heatPct = 2.75;
+  else if (heatSum > 120) heatPct = 1.5;
+  else if (heatSum > 110) heatPct = 0.75;
+
+  const elev = envDay.elevationMeters || 0;
+  const altitudePct = elev > 1000 ? Math.round(((elev - 1000) / 1000) * 4.5 * 10) / 10 : 0;
+
+  const windWarning = (envDay.windMs || 0) >= 5.0;
+  const aqi = envDay.usAqi ?? 50;
+  const weatherCode = envDay.weatherCode ?? 0;
+  const indoorRecommended = aqi > 150 || weatherCode >= 95;
+
+  const slowdownPct = Math.round((heatPct + altitudePct) * 10) / 10;
+
+  const reasons = [];
+  if (heatPct > 0) reasons.push(`热湿指数 ${heatSum}°F (配速放慢 ${heatPct}%)`);
+  if (altitudePct > 0) reasons.push(`海拔 ${elev}m (配速放慢 ${altitudePct}%)`);
+  if (windWarning) reasons.push(`风速 ${envDay.windMs}m/s，逆风段按心率控制`);
+  if (aqi > 150) reasons.push(`AQI ${aqi} 空气污染预警，建议改室内跑步机`);
+  if (weatherCode >= 95) reasons.push('雷暴天气预警，强制切换室内方案');
+
+  return {
+    slowdownPct,
+    heatIndexSumF: heatSum,
+    heatPct,
+    altitudePct,
+    windWarning,
+    indoorRecommended,
+    summary: reasons.length > 0 ? reasons.join('；') : '温湿度与空气质量极佳，适合按基准配速冲刺'
+  };
+}
+
+/**
+ * 晨间「红绿灯」生理准备度评分与自动调课判断
+ */
+export function evaluateReadiness(wellness, pmcLatest) {
+  const hrvCurrent = wellness?.hrvToday ?? wellness?.hrv7dAvg ?? 55;
+  const hrvBaseline = wellness?.hrv7dAvg ?? hrvCurrent;
+  const hrvRatio = hrvBaseline > 0 ? hrvCurrent / hrvBaseline : 1;
+
+  const sleepScore = wellness?.sleepScore ?? 78;
+  const bodyBattery = wellness?.bodyBatteryMorning ?? 75;
+  const rhrCurrent = wellness?.rhrToday ?? wellness?.rhr7dAvg ?? 50;
+  const rhrBaseline = wellness?.rhr7dAvg ?? rhrCurrent;
+  const rhrDelta = rhrCurrent - rhrBaseline;
+  const acwr = pmcLatest?.acwr ?? 1.0;
+
+  // 综合评分 (0-100)
+  let score = 80;
+  score += Math.max(-20, Math.min(12, (hrvRatio - 1) * 80));
+  score += Math.max(-15, Math.min(10, (sleepScore - 75) * 0.5));
+  score += Math.max(-15, Math.min(10, (bodyBattery - 70) * 0.4));
+  if (rhrDelta > 0) score -= Math.min(20, rhrDelta * 3.5);
+  if (acwr > 1.35) score -= Math.min(18, (acwr - 1.35) * 45);
+  else if (acwr < 0.75) score += 2;
+  score = Math.round(Math.max(15, Math.min(99, score)));
+
+  // 红绿灯规则
+  let light = 'green';
+  const triggers = [];
+
+  if (hrvRatio < 0.85 || rhrDelta >= 5 || bodyBattery < 50 || acwr > 1.35 || sleepScore < 60) {
+    light = 'red';
+    if (hrvRatio < 0.85) triggers.push(`HRV 跌破基线 (${hrvCurrent}ms vs ${hrvBaseline}ms)`);
+    if (rhrDelta >= 5) triggers.push(`晨脉飙升 +${rhrDelta} bpm`);
+    if (bodyBattery < 50) triggers.push(`晨起身体电量过低 (${bodyBattery})`);
+    if (acwr > 1.35) triggers.push(`ACWR=${acwr} 进入高负荷伤病预警区`);
+    if (sleepScore < 60) triggers.push(`睡眠评分过低 (${sleepScore})`);
+  } else if (hrvRatio < 0.94 || rhrDelta >= 3 || bodyBattery < 65 || sleepScore < 75 || acwr > 1.25) {
+    light = 'yellow';
+    if (hrvRatio < 0.94) triggers.push('HRV 处于基线下沿');
+    if (rhrDelta >= 3) triggers.push(`静息心率略偏高 (+${rhrDelta} bpm)`);
+    if (bodyBattery < 65) triggers.push(`身体电量一般 (${bodyBattery})`);
+    if (sleepScore < 75) triggers.push(`睡眠评分不足 (${sleepScore})`);
+    if (acwr > 1.25) triggers.push(`ACWR=${acwr} 负荷偏高`);
+  } else {
+    triggers.push('HRV、晨脉、睡眠与负荷比均处于理想区间');
+  }
+
+  return {
+    light,
+    lightLabel: light === 'green' ? '绿灯 · 全力推进' : light === 'yellow' ? '黄灯 · 降量控强' : '红灯 · 强制恢复',
+    score,
+    hrvRatio: Math.round(hrvRatio * 100) / 100,
+    rhrDelta: Math.round(rhrDelta * 10) / 10,
+    triggers
+  };
+}
