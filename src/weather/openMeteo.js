@@ -1,3 +1,5 @@
+import { getLocalIsoDate } from '../science/metrics.js';
+
 /**
  * Open-Meteo 天气、露点、风速、海拔与空气质量客户端（完全免费，无需 API Key）
  */
@@ -208,7 +210,7 @@ async function fetchWttrFallback(loc, { preferredRunHour = 6, days = 7 }) {
   const dailyList = [];
 
   for (let i = 0; i < days; i++) {
-    const baseDate = new Date(Date.now() + i * 86400_000).toISOString().slice(0, 10);
+    const baseDate = getLocalIsoDate(i, timezone);
     const wDay = wttrDays[i] || wttrDays[wttrDays.length - 1];
     if (!wDay) break;
 

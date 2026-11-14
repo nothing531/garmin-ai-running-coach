@@ -7,6 +7,32 @@
  * - 天气露点 / 海拔 / 风速 / AQI 环境配速修正
  */
 
+const DEFAULT_TIMEZONE = 'Asia/Shanghai';
+
+/**
+ * 按指定时区（默认 UTC+8 Asia/Shanghai）获取 YYYY-MM-DD 本地日期，避免服务器 UTC 跨零点日历偏移
+ */
+export function getLocalIsoDate(offsetDays = 0, timeZone = DEFAULT_TIMEZONE, now = new Date()) {
+  const baseIso = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(now);
+  if (!offsetDays) return baseIso;
+  const d = new Date(`${baseIso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * 依据 YYYY-MM-DD 安全计算星期几（0=周日 .. 6=周六），不受运行宿主时区影响
+ */
+export function getWeekdayIndexFromIso(isoDate) {
+  const d = new Date(`${String(isoDate || '').slice(0, 10)}T12:00:00Z`);
+  return Number.isNaN(d.getTime()) ? new Date().getDay() : d.getUTCDay();
+}
+
 export function formatPace(secPerKm) {
   if (!Number.isFinite(secPerKm) || secPerKm <= 0) return '--:--';
   const rounded = Math.round(secPerKm);
@@ -83,7 +109,7 @@ export function computePmcSeries(activities, physiology = {}, days = 56) {
     dailyMap.set(date, (dailyMap.get(date) || 0) + load);
   }
 
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = getLocalIsoDate(0, physiology.timeZone || DEFAULT_TIMEZONE);
   const todayUtc = new Date(`${todayIso}T12:00:00Z`);
   const start = new Date(todayUtc);
   start.setUTCDate(todayUtc.getUTCDate() - (days - 1));
@@ -257,7 +283,7 @@ export function computeWeeklyAndZones(activities, physiology = {}) {
   const weekBuckets = new Map();
 
   // 严格锚定截至本周的最近 8 个自然周（按周一对齐），无记录周补 0
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = getLocalIsoDate(0, physiology.timeZone || DEFAULT_TIMEZONE);
   const todayUtc = new Date(`${todayIso}T12:00:00Z`);
   const diffToCurrentMon = (todayUtc.getUTCDay() + 6) % 7;
   const currentMon = new Date(todayUtc);

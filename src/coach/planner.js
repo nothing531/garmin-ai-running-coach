@@ -1,4 +1,10 @@
-import { computeEnvironmentalAdjustment, formatPace, parsePaceSecPerKm } from '../science/metrics.js';
+import {
+  computeEnvironmentalAdjustment,
+  formatPace,
+  getLocalIsoDate,
+  getWeekdayIndexFromIso,
+  parsePaceSecPerKm
+} from '../science/metrics.js';
 
 const SYSTEM_PROMPT = `你是一位拥有运动生理学博士背景与世界级耐力教练经验的「私人 AI 跑步总教练」。
 你的理论基石是 Jack Daniels VDOT 体系、80/20 极化训练法（结合挪威阈值理念）与 Banister PMC 负荷模型。
@@ -359,12 +365,11 @@ export function buildDeterministicCoachPlan(context, config = {}) {
   const days = [];
   let customDayCount = 0;
 
+  const tz = config.timezone || 'Asia/Shanghai';
   for (let i = 0; i < 7; i++) {
     const env = forecastDays[i] || null;
-    const dateStr =
-      env?.date ||
-      new Date(Date.now() + i * 86400_000).toISOString().slice(0, 10);
-    const dow = new Date(dateStr).getDay();
+    const dateStr = env?.date || getLocalIsoDate(i, tz);
+    const dow = getWeekdayIndexFromIso(dateStr);
     const adj = computeEnvironmentalAdjustment(env);
     const scale = 1 + (adj.slowdownPct || 0) / 100;
 

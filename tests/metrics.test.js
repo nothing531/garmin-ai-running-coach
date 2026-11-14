@@ -7,6 +7,8 @@ import {
   computePolarizationStats,
   computeWeeklyAndZones,
   evaluateReadiness,
+  getLocalIsoDate,
+  getWeekdayIndexFromIso,
   parsePaceSecPerKm
 } from '../src/science/metrics.js';
 import { buildDeterministicCoachPlan } from '../src/coach/planner.js';
@@ -293,4 +295,14 @@ test('Treff (2019) Polarization Index 与极化/金字塔/空白分布判别', (
   assert.equal(empty.polarizationIndex, 0);
   assert.equal(empty.distributionType, 'insufficient_data');
   assert.equal(empty.isPolarized, false);
+});
+
+test('getLocalIsoDate 与 getWeekdayIndexFromIso 在 UTC+8 跨日窗口保持准确', () => {
+  // UTC 2026-11-14 22:30 = 北京时间 (UTC+8) 2026-11-15 06:30（周日）
+  const utcEvening = new Date('2026-11-14T22:30:00Z');
+  const bjDate = getLocalIsoDate(0, 'Asia/Shanghai', utcEvening);
+  assert.equal(bjDate, '2026-11-15');
+  assert.equal(getWeekdayIndexFromIso(bjDate), 0); // 0 = 周日
+  assert.equal(getLocalIsoDate(-1, 'Asia/Shanghai', utcEvening), '2026-11-14');
+  assert.equal(getWeekdayIndexFromIso('2026-11-14'), 6); // 6 = 周六
 });

@@ -7,6 +7,7 @@ import {
 } from '@likenttt/connect-personal-api-ts';
 import GarminConnectModule from '@likenttt/garmin-connect';
 import { parseGarminFitZip } from './fitDecoder.js';
+import { getLocalIsoDate, getWeekdayIndexFromIso } from '../science/metrics.js';
 
 const GarminConnect =
   GarminConnectModule.GarminConnect ||
@@ -15,9 +16,7 @@ const GarminConnect =
   GarminConnectModule;
 
 function isoDateOffset(daysAgo = 0) {
-  const d = new Date();
-  d.setDate(d.getDate() - daysAgo);
-  return d.toISOString().slice(0, 10);
+  return getLocalIsoDate(-daysAgo);
 }
 
 function isRunningActivity(typeKey = '') {
@@ -408,10 +407,8 @@ export function generateDemoTelemetry(config = {}) {
   const now = new Date();
 
   for (let i = 55; i >= 1; i--) {
-    const d = new Date(now);
-    d.setDate(now.getDate() - i);
-    const iso = d.toISOString().slice(0, 10);
-    const dow = d.getDay(); // 0=Sun
+    const iso = isoDateOffset(i);
+    const dow = getWeekdayIndexFromIso(iso); // 0=Sun
 
     if (dow === 1 || dow === 5) continue; // 周一、周五休息
 
@@ -508,7 +505,7 @@ export function generateDemoTelemetry(config = {}) {
       ]
     },
     wellness: {
-      date: now.toISOString().slice(0, 10),
+      date: isoDateOffset(0),
       hrvToday: 64,
       hrv7dAvg: 61,
       hrvStatus: 'BALANCED',

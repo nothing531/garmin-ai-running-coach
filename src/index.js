@@ -7,7 +7,8 @@ import {
   computeEnvironmentalAdjustment,
   computePmcSeries,
   computeWeeklyAndZones,
-  evaluateReadiness
+  evaluateReadiness,
+  getLocalIsoDate
 } from './science/metrics.js';
 import { generateCoachPlan } from './coach/planner.js';
 import { renderDashboardHtml } from './render/dashboard.js';
@@ -201,7 +202,7 @@ async function main() {
 function buildOfflineWeatherFallback(loc) {
   const daily = [];
   for (let i = 0; i < 7; i++) {
-    const d = new Date(Date.now() + i * 86400_000).toISOString().slice(0, 10);
+    const d = getLocalIsoDate(i);
     daily.push({
       date: d,
       runWindow: '06:00',
