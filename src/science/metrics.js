@@ -179,6 +179,65 @@ export function computeAerobicDecoupling(records) {
 }
 
 /**
+ * 根据 3 区间占比计算 Treff (2019) 极化指数 Polarization Index (a.U.) 与分布类型
+ * Eq.1 (Z2 > 0): PI = log10((Z1 / Z2) * Z3 * 100)
+ * Eq.2 (Z2 == 0): PI = log10((Z1 / 0.01) * (Z3 - 0.01) * 100)
+ */
+export function computePolarizationStats(zoneSeconds) {
+  const actualTotal = zoneSeconds.reduce((a, b) => a + b, 0);
+  if (actualTotal <= 0) {
+    return {
+      zonePercentages: [0, 0, 0, 0, 0],
+      lowIntensityPct: 0,
+      grayZonePct: 0,
+      highIntensityPct: 0,
+      polarizationIndex: 0,
+      distributionType: 'insufficient_data',
+      isPolarized: false
+    };
+  }
+
+  const zonePercentages = zoneSeconds.map((s) => Math.round((s / actualTotal) * 1000) / 10);
+  const z1 = (zoneSeconds[0] + zoneSeconds[1]) / actualTotal;
+  const z2 = zoneSeconds[2] / actualTotal;
+  const z3 = (zoneSeconds[3] + zoneSeconds[4]) / actualTotal;
+
+  const lowIntensityPct = Math.round(z1 * 1000) / 10;
+  const grayZonePct = Math.round(z2 * 1000) / 10;
+  const highIntensityPct = Math.round(z3 * 1000) / 10;
+
+  let rawPi = 0;
+  if (z1 > 0 && z3 > 0) {
+    if (z2 === 0) {
+      rawPi = z3 > 0.01 ? (z1 / 0.01) * (z3 - 0.01) * 100 : 0;
+    } else {
+      rawPi = (z1 / z2) * z3 * 100;
+    }
+  }
+  const polarizationIndex = rawPi > 0 ? Math.round(Math.log10(rawPi) * 100) / 100 : 0;
+  const isPolarized = z1 > z3 && z3 > z2 && polarizationIndex > 2.0;
+
+  let distributionType = 'mixed';
+  if (isPolarized) {
+    distributionType = 'polarized';
+  } else if (z1 > z2 && z2 >= z3) {
+    distributionType = z3 === 0 ? 'low_intensity_base' : 'pyramidal';
+  } else if (z2 >= z1 && z2 >= z3) {
+    distributionType = 'threshold';
+  }
+
+  return {
+    zonePercentages,
+    lowIntensityPct,
+    grayZonePct,
+    highIntensityPct,
+    polarizationIndex,
+    distributionType,
+    isPolarized
+  };
+}
+
+/**
  * 统计近 8 个自然周按周跑量 & 80/20 心率区间分布
  */
 export function computeWeeklyAndZones(activities, physiology = {}) {
@@ -256,11 +315,7 @@ export function computeWeeklyAndZones(activities, physiology = {}) {
     }
   }
 
-  const totalZoneSec = zoneSeconds.reduce((a, b) => a + b, 0) || 1;
-  const zonePercentages = zoneSeconds.map((s) => Math.round((s / totalZoneSec) * 1000) / 10);
-  const lowIntensityPct = Math.round(((zoneSeconds[0] + zoneSeconds[1]) / totalZoneSec) * 1000) / 10;
-  const thresholdGrayPct = Math.round((zoneSeconds[2] / totalZoneSec) * 1000) / 10;
-  const highIntensityPct = Math.round(((zoneSeconds[3] + zoneSeconds[4]) / totalZoneSec) * 1000) / 10;
+  const polStats = computePolarizationStats(zoneSeconds);
 
   const weekly = recentWeekKeys.map((weekKey) => {
     const w = weekBuckets.get(weekKey);
@@ -275,12 +330,14 @@ export function computeWeeklyAndZones(activities, physiology = {}) {
   return {
     weekly,
     zoneBoundaries: zBoundaries,
-    zonePercentages,
+    zonePercentages: polStats.zonePercentages,
     polarization: {
-      lowIntensityPct,
-      grayZonePct: thresholdGrayPct,
-      highIntensityPct,
-      isPolarized: lowIntensityPct >= 75 && thresholdGrayPct <= 15
+      lowIntensityPct: polStats.lowIntensityPct,
+      grayZonePct: polStats.grayZonePct,
+      highIntensityPct: polStats.highIntensityPct,
+      polarizationIndex: polStats.polarizationIndex,
+      distributionType: polStats.distributionType,
+      isPolarized: polStats.isPolarized
     }
   };
 }

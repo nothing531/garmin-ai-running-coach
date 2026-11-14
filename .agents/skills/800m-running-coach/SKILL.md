@@ -16,9 +16,11 @@ scientific 800m knowledge base (`knowledge/`) and live Garmin telemetry pipeline
 
 - Primary physiology & methodology bible:
   [800m-interval-bible.md](../../../knowledge/800m-interval-bible.md)
+- Dual-end polarized & sprint-polarization handbook:
+  [polarized-training-bible.md](../../../knowledge/polarized-training-bible.md)
 - Periodized track & strength interval session library:
   [interval-session-catalog.md](../../../knowledge/interval-session-catalog.md)
-- Source archive index (Sandford 2018 PhD thesis + 11 Open-Access PMC papers):
+- Source archive index (Sandford 2018 PhD thesis + 16 Open-Access PMC papers):
   [knowledge/README.md](../../../knowledge/README.md)
 - Athlete live telemetry & config:
   [runner.config.json](../../../config/runner.config.json) and
@@ -43,9 +45,12 @@ scientific 800m knowledge base (`knowledge/`) and live Garmin telemetry pipeline
      * **Aerobic Support (`Stage 0-2`)**: Z1-Z2 volume (with cross-training early on), short cruise intervals (`THR-CRUISE`), and variable-intensity / primed long intervals (`VO2-LONG`) once base tolerance is rebuilt.
      * **Year-Round Micro-Dosed MSS (`Stage 0b-4`)**: `SPD-STRIDES` (`2-4 x 50-60m` with full `90-120s` walk rest) at end of warm-ups (`2x/week`) to prevent spring hamstring strains ("fear of MSS").
      * **Lactic Tolerance (`Stage 3-4` ONLY, max 6-8 weeks)**: `SE-SPLIT-800` (`500+300` / `600+200`) and `SE-HART-TOL` at most once per `7-10` days with full `48-72h` recovery afterwards.
-4. **Integrate Strength & ITBS Firewall**:
+4. **Enforce Dual-End Polarization Rule (Anti-"Black Hole")**:
+   - **Slow end must be truly slow (`< LT1`)**: Cap all Easy (`E`), `LSD`, and aerobic cross-training at `<= 82-84% LTHR` (`<= 152-154 bpm` for `LTHR=183`). Never let easy jogs drift into Z3 gray zone (`155-169 bpm`). Target Treff Polarization Index `PI > 2.00` during polarized Build/Peak phases (following Filipas 2022 `PYR -> POL` progression).
+   - **Fast end must hit true speed (`>= 95% MSS`) with full CNS recovery**: Prescribe sprint/flying `30-60m` or `R` reps strictly by stopwatch splits + full `3-6 min` walk rest (ignore lagging wrist HR on reps `< 30s`). Allow `>= 48h` CNS recovery between maximal speed sessions (`PMC6872694`).
+5. **Integrate Strength & ITBS Firewall**:
    - Combine heavy lower-body strength (`>=80% 1RM` in Build/Peak, progressive toward `70-85 kg` squat) with low-volume plyometrics/explosive jumps (`PMC11258194`).
    - Always include `3 x 45-60s` isometric wall sits + glute medius activation as ITBS protection.
-5. **Enforce Stopping & Compliance Rules**:
+6. **Enforce Stopping & Compliance Rules**:
    - Every track interval session must specify exact split targets, rest durations, and a **drop-off cutoff**: stop the session early if pace slips `>3%` on speed/RP reps for 2 consecutive reps or if lateral knee pain exceeds `2/10` / alters gait.
    - Do not modify `config/runner.config.json` or `config/custom-plan.json` without running `npm test` and verifying `npm run coach`.

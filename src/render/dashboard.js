@@ -324,7 +324,7 @@ export function renderDashboardHtml(payload) {
       <div class="lg:col-span-5 glass rounded-3xl border border-slate-800 p-6 flex flex-col justify-between">
         <div>
           <h2 class="text-base font-semibold text-white">80/20 极化分布 & 近8周跑量</h2>
-          <p class="text-xs text-slate-400 font-mono mt-0.5">低强度 Z1-Z2: ${weeklyZones.polarization.lowIntensityPct}% · 灰色 Z3: ${weeklyZones.polarization.grayZonePct}% · 高强度 Z4-Z5: ${weeklyZones.polarization.highIntensityPct}%</p>
+          <p class="text-xs text-slate-400 font-mono mt-0.5">低强度 Z1-Z2: ${weeklyZones.polarization.lowIntensityPct}% · 灰色 Z3: ${weeklyZones.polarization.grayZonePct}% · 高强度 Z4-Z5: ${weeklyZones.polarization.highIntensityPct}% · 极化指数 PI: <strong class="${weeklyZones.polarization.polarizationIndex > 2 ? 'text-emerald-400' : 'text-slate-300'}">${weeklyZones.polarization.polarizationIndex ?? 0}</strong> (${weeklyZones.polarization.distributionType || '--'})</p>
         </div>
         <div class="h-40 mt-3">
           <canvas id="weeklyChart"></canvas>

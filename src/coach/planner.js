@@ -225,13 +225,13 @@ function normalizeCustomDayTemplate(entry, defaults) {
   const type = String(entry?.type || 'E').toUpperCase();
   const typeDefaults = {
     REST: { baseSec: paces.easyPaceSec, hrRange: '静息恢复', cadence: '--', rpe: '1-2/10', carbFactor: 0.4 },
-    STR: { baseSec: paces.easyPaceSec + 10, hrRange: `${Math.round(lthr * 0.72)}-${Math.round(lthr * 0.81)} bpm (Z1-Z2)`, cadence: '174-178 spm', rpe: '3/10', carbFactor: 0.6 },
-    E: { baseSec: paces.easyPaceSec, hrRange: `${Math.round(lthr * 0.75)}-${Math.round(lthr * 0.85)} bpm (Z2)`, cadence: '174-180 spm', rpe: '4/10', carbFactor: 0.7 },
-    LSD: { baseSec: paces.easyPaceSec - 8, hrRange: `${Math.round(lthr * 0.80)}-${Math.round(lthr * 0.90)} bpm (Z2-Z3下沿)`, cadence: '176-182 spm', rpe: '6/10', carbFactor: 1.2 },
+    STR: { baseSec: paces.easyPaceSec + 10, hrRange: `${Math.round(lthr * 0.70)}-${Math.round(lthr * 0.80)} bpm (严格极化 Z1，<LT1)`, cadence: '174-178 spm', rpe: '3/10', carbFactor: 0.6 },
+    E: { baseSec: paces.easyPaceSec, hrRange: `${Math.round(lthr * 0.72)}-${Math.round(lthr * 0.82)} bpm (严格极化 Z1-Z2，<LT1)`, cadence: '174-180 spm', rpe: '4/10', carbFactor: 0.7 },
+    LSD: { baseSec: paces.easyPaceSec - 8, hrRange: `${Math.round(lthr * 0.74)}-${Math.round(lthr * 0.84)} bpm (严格极化 Z1-Z2，<LT1)`, cadence: '176-182 spm', rpe: '5.5/10', carbFactor: 1.2 },
     M: { baseSec: paces.marathonPaceSec, hrRange: `${Math.round(lthr * 0.89)}-${Math.round(lthr * 0.95)} bpm (Z3-Z4)`, cadence: '180-186 spm', rpe: '6.5/10', carbFactor: 1.0 },
     T: { baseSec: paces.thresholdPaceSec, hrRange: `${Math.round(lthr * 0.96)}-${Math.round(lthr * 1.01)} bpm (Z4)`, cadence: '182-186 spm', rpe: '7-8/10', carbFactor: 1.0 },
     I: { baseSec: paces.intervalPaceSec, hrRange: `${Math.round(maxHr * 0.91)}-${Math.round(maxHr * 0.96)} bpm (Z5)`, cadence: '186-192 spm', rpe: '8.5/10', carbFactor: 1.0 },
-    R: { baseSec: paces.repPaceSec, hrRange: `${Math.round(maxHr * 0.92)}-${Math.round(maxHr * 0.98)} bpm (Z5)`, cadence: '190-196 spm', rpe: '9/10', carbFactor: 0.9 }
+    R: { baseSec: paces.repPaceSec, hrRange: '按分段秒表配速与完全恢复走休执行（短冲 HR 滞后不追心率）', cadence: '190-196 spm', rpe: '9/10', carbFactor: 0.9 }
   };
   const fallback = typeDefaults[type] || typeDefaults.E;
   const distanceKm = Number(entry?.plannedDistanceKm ?? (type === 'REST' ? 0 : 8));
@@ -470,7 +470,7 @@ export function buildDeterministicCoachPlan(context, config = {}) {
         durationMin: 50,
         tss: 44,
         baseSec: easyPaceSec,
-        hrRange: `${Math.round(lthr * 0.75)}-${Math.round(lthr * 0.85)} bpm (Z2)`,
+        hrRange: `${Math.round(lthr * 0.72)}-${Math.round(lthr * 0.82)} bpm (严格极化 Z1-Z2，<LT1)`,
         cadence: '174-180 spm',
         rpe: '4/10',
         warmup: '前 1km 极慢配速过渡，让心率自然爬升',
@@ -536,7 +536,7 @@ export function buildDeterministicCoachPlan(context, config = {}) {
         durationMin: 56,
         tss: 52,
         baseSec: easyPaceSec,
-        hrRange: `${Math.round(lthr * 0.77)}-${Math.round(lthr * 0.86)} bpm (Z2)`,
+        hrRange: `${Math.round(lthr * 0.73)}-${Math.round(lthr * 0.83)} bpm (严格极化 Z1-Z2，<LT1)`,
         cadence: '176-182 spm',
         rpe: '4.5/10',
         warmup: '1km 慢跑唤醒',
@@ -555,7 +555,7 @@ export function buildDeterministicCoachPlan(context, config = {}) {
       durationMin: stage === 'Taper' ? 75 : 110,
       tss: stage === 'Taper' ? 82 : 122,
       baseSec: easyPaceSec - 8,
-      hrRange: `${Math.round(lthr * 0.80)}-${Math.round(lthr * 0.90)} bpm (Z2-Z3下沿)`,
+      hrRange: `${Math.round(lthr * 0.74)}-${Math.round(lthr * 0.84)} bpm (严格极化 Z1-Z2，<LT1)`,
       cadence: '176-182 spm',
       rpe: '6/10',
       warmup: '前 3km 较轻松配速慢启动，保护关节滑液分泌',
@@ -577,7 +577,7 @@ export function buildDeterministicCoachPlan(context, config = {}) {
       ? `最近重点长距离 (${lastKeyWorkoutAudit.activity?.name}) 有氧解耦率为 ${dec.decouplingPct}%（${dec.status === 'solid' ? '低于5%，有氧底座扎实' : '略偏高，后半程存在轻微热/疲劳漂移'}），平均步频 ${lastKeyWorkoutAudit.activity?.cadence || '--'} spm，整体配速控制稳定。`
       : '当前样本暂无完整 .FIT 遥测记录，建议下次跑步保持心率带或手表紧贴佩戴，以采集更精确的步幅与解耦数据。');
 
-  const liveMetricsSummary = `当前处于【${customPlan?.macroPhase?.stageDisplay || stageDisplay}】，今日生理准备度 ${readiness.score}/100（${readiness.lightLabel}）。ACWR=${pmc.latest.acwr}、TSB=${pmc.latest.tsb}，近 8 周有氧低强度占比 ${weeklyZones.polarization.lowIntensityPct}%。${readiness.triggers.join('；')}。`;
+  const liveMetricsSummary = `当前处于【${customPlan?.macroPhase?.stageDisplay || stageDisplay}】，今日生理准备度 ${readiness.score}/100（${readiness.lightLabel}）。ACWR=${pmc.latest.acwr}、TSB=${pmc.latest.tsb}，近 8 周极化指数 PI=${weeklyZones.polarization.polarizationIndex}（${weeklyZones.polarization.distributionType}，低强度占比 ${weeklyZones.polarization.lowIntensityPct}%）。${readiness.triggers.join('；')}。`;
   const coachNotes = customPlan?.coachNotes?.trim();
   const coachSummary = coachNotes
     ? `${liveMetricsSummary} ｜ 【Antigravity 教练备忘 (${customPlan.updatedAt || '定制周期'})】${coachNotes}`

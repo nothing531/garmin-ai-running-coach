@@ -4,6 +4,7 @@ import {
   computeAerobicDecoupling,
   computeEnvironmentalAdjustment,
   computePmcSeries,
+  computePolarizationStats,
   computeWeeklyAndZones,
   evaluateReadiness,
   parsePaceSecPerKm
@@ -256,4 +257,40 @@ test('陈旧历史跑步记录不应混入近8周跑量、区间分布或虚增�
   assert.equal(weeklyZonesMixed.weekly[7].sessions, 1);
   assert.ok(weeklyZonesMixed.weekly.slice(0, 7).every((w) => w.distanceKm === 0));
   assert.equal(weeklyZonesMixed.polarization.lowIntensityPct, 100);
+});
+
+test('Treff (2019) Polarization Index 与极化/金字塔/空白分布判别', () => {
+  // 80-8-12 -> log10((0.80/0.08)*0.12*100) = log10(120) = 2.08 (polarized)
+  const pol = computePolarizationStats([500, 300, 80, 70, 50]);
+  assert.equal(pol.polarizationIndex, 2.08);
+  assert.equal(pol.distributionType, 'polarized');
+  assert.equal(pol.isPolarized, true);
+
+  // 74-11-15 -> log10((0.74/0.11)*0.15*100) = 2.00 (boundary, requires PI > 2.00)
+  const boundary = computePolarizationStats([500, 240, 110, 100, 50]);
+  assert.equal(boundary.polarizationIndex, 2.00);
+  assert.equal(boundary.isPolarized, false);
+
+  // 80-0-20 -> Eq.2 log10((0.80/0.01)*(0.20-0.01)*100) = log10(1520) = 3.18
+  const noGray = computePolarizationStats([500, 300, 0, 120, 80]);
+  assert.equal(noGray.polarizationIndex, 3.18);
+  assert.equal(noGray.distributionType, 'polarized');
+  assert.equal(noGray.isPolarized, true);
+
+  // 75-15-10 -> pyramidal (Z1 > Z2 >= Z3, PI = 1.70)
+  const pyr = computePolarizationStats([500, 250, 150, 70, 30]);
+  assert.equal(pyr.polarizationIndex, 1.7);
+  assert.equal(pyr.distributionType, 'pyramidal');
+  assert.equal(pyr.isPolarized, false);
+
+  // 30-50-20 -> threshold-heavy
+  const thr = computePolarizationStats([200, 100, 500, 150, 50]);
+  assert.equal(thr.distributionType, 'threshold');
+  assert.equal(thr.isPolarized, false);
+
+  // Empty data
+  const empty = computePolarizationStats([0, 0, 0, 0, 0]);
+  assert.equal(empty.polarizationIndex, 0);
+  assert.equal(empty.distributionType, 'insufficient_data');
+  assert.equal(empty.isPolarized, false);
 });

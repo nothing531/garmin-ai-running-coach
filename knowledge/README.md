@@ -14,6 +14,10 @@
 2. **[interval-session-catalog.md](file:///d:/Garmin_codex/knowledge/interval-session-catalog.md)** — **800 米标准化田径场与力量间歇课表库**
    - 覆盖 `Module A (神经/MSS/短坡)`、`Module B (阈值/红区 VO2max/短间歇)`、`Module C (800m 比赛节奏)`、`Module D (Canova 拆分 800m / Hart 耐受 / Taper 锐化)`
    - 含各阶段配速锚点（针对 `60.5s/400m` 与 `30.25s/200m`）与组内掉速停表规则
+3. **[polarized-training-bible.md](file:///d:/Garmin_codex/knowledge/polarized-training-bible.md)** — **双端极化训练与速度分级手册（Dual-End Polarized Training）**
+   - Seiler 3 区间（`<LT1 / LT1–LT2 / >LT2`）vs Garmin 5 区间映射及常见“双端黑洞”（慢跑太快掉灰区、速度太慢缺最大速度刺激）矫正法则
+   - Treff 极化指数 `PI > 2.00` 量化判据与 Filipas 16 周 RCT（`PYR -> POL` 先金字塔后极化优于单一模式）
+   - 短跑极化模型（`≥95% MSS` 纯神经极限 vs `<70%` 恢复，避开 `70–94%` 亚极量中庸黑洞）与 Garmin 手表实操报警线（`≤ 152–154 bpm` + 走休/秒表分段）
 
 ---
 
@@ -32,6 +36,11 @@
 | [PMC7926175_Fatigue_Kinematics_LegStiffness_MiddleDistance_2021.md](file:///d:/Garmin_codex/knowledge/sources/PMC7926175_Fatigue_Kinematics_LegStiffness_MiddleDistance_2021.md) | 生物力学 (2021) | 中距离跑高疲劳期腿部刚度（Leg Stiffness）下降如何诱发触地延长与后程掉速 |
 | [PMC8975965_Haugen_TrainingCharacteristics_WorldClassRunners_2022.md](file:///d:/Garmin_codex/knowledge/sources/PMC8975965_Haugen_TrainingCharacteristics_WorldClassRunners_2022.md) | 权威综述 (2022) | 59 名奥运/世锦赛奖牌级跑者的周期分布、80/20 极化比与减量 Taper 规律 |
 | [PMC4621419_Stoggl_TrainingIntensityDistribution_Elite_2015.md](file:///d:/Garmin_codex/knowledge/sources/PMC4621419_Stoggl_TrainingIntensityDistribution_Elite_2015.md) | 综述 (2015) | 极化训练（Polarized）vs 阈值训练分布比较 |
+| [PMC3912323_Stoggl_Sperlich_PolarizedVsThreshold_2014.md](file:///d:/Garmin_codex/knowledge/sources/PMC3912323_Stoggl_Sperlich_PolarizedVsThreshold_2014.md) | 9周 RCT (2014) | Stöggl & Sperlich 经典对照试验：POL 组 VO2peak (`+11.7%`)、TTE (`+17.4%`)、v4mmol (`+8.1%`) 全面胜出阈值/纯高量组 |
+| [PMC6582670_Treff_PolarizationIndex_2019.md](file:///d:/Garmin_codex/knowledge/sources/PMC6582670_Treff_PolarizationIndex_2019.md) | 方法学论文 (2019) | 提出量化极化指数 `PI = log10((Z1/Z2)*Z3*100)` 与 `PI > 2.00 a.U.` 极化判定公式 |
+| [PMC9299127_Filipas_PyramidalVsPolarized_Runners_2022.md](file:///d:/Garmin_codex/knowledge/sources/PMC9299127_Filipas_PyramidalVsPolarized_Runners_2022.md) | 16周 RCT (2022) | 60名跑者随机对照：先 8 周金字塔再转 8 周极化（`PYR -> POL`）在 VO2peak 与 5km 成绩提升上最显著 |
+| [PMC4096917_Tonnessen_Seiler_RoadToGold_2014.md](file:///d:/Garmin_codex/knowledge/sources/PMC4096917_Tonnessen_Seiler_RoadToGold_2014.md) | 奥运金牌队列 (2014) | 11名奥运/世锦赛金牌选手赛前“临近大赛越发极化”的 5-Zone 精细配比规律 |
+| [PMC6872694_Haugen_Seiler_EliteSprintPerformance_2019.md](file:///d:/Garmin_codex/knowledge/sources/PMC6872694_Haugen_Seiler_EliteSprintPerformance_2019.md) | 顶尖综述 (2019) | 短跑极化模型（`≥95% MSS` vs `<70%` 避开中庸黑洞）、48h CNS 恢复窗口及转期防腘绳肌拉伤 |
 | [PMC12881007_VLamax_LactateAccumulation_TestingTraining_2026.md](file:///d:/Garmin_codex/knowledge/sources/PMC12881007_VLamax_LactateAccumulation_TestingTraining_2026.md) | 综述 (2026) | 最大乳酸生成速率（`vLamax`）测试与糖酵解供能调控 |
 
 ---
