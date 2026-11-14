@@ -180,6 +180,18 @@ export function decodeWmoCode(code) {
   return '多云';
 }
 
+function mapWwoToWmo(wwoCode) {
+  const c = Number(wwoCode);
+  if (c === 113) return 0;
+  if (c === 116) return 2;
+  if (c === 119 || c === 122) return 3;
+  if (c === 143 || c === 248 || c === 260) return 45;
+  if ([200, 386, 389, 392, 395].includes(c)) return 95;
+  if ([176, 263, 266, 293, 296, 299, 302, 305, 308, 353, 356, 359].includes(c)) return 61;
+  if (c >= 179 && c <= 377) return 71;
+  return 2;
+}
+
 function round1(v) {
   return typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 10) / 10 : null;
 }
@@ -217,7 +229,7 @@ async function fetchWttrFallback(loc, { preferredRunHour = 6, days = 7 }) {
     dailyList.push({
       date: i < wttrDays.length && wDay.date ? wDay.date : baseDate,
       runWindow: `${String(preferredRunHour).padStart(2, '0')}:00`,
-      weatherCode: Number(slot.weatherCode ?? 116),
+      weatherCode: mapWwoToWmo(slot.weatherCode ?? 116),
       weatherText: slot.weatherDesc?.[0]?.value || '多云',
       tempC: round1(tempC),
       tempMaxC: round1(Number(wDay.maxtempC ?? tempC + 4)),
