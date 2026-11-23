@@ -7,7 +7,7 @@
   1. Merge into `data/private/checkins.json` without overwriting phone/web-submitted entries.
   2. Sync updated state files (`checkins.json`, and `custom-plan.json` / `runner.config.json` when changed) to `huawei-sg:/opt/garmin-coach` with `chmod 600` on private files.
   3. Run `cd /opt/garmin-coach && node src/index.js --render-only` on `huawei-sg` (and locally if needed) so `dashboard-payload.json` and the live website update immediately.
-- **Workout Calendar Sync**: Whenever `config/custom-plan.json` changes future running targets or swaps training days, also sync structured workouts to Garmin Connect (`npm run sync-workouts -- --days 5` or `--date YYYY-MM-DD`).
+- **Workout Calendar Sync**: Whenever `config/custom-plan.json` changes future running targets or swaps training days, also sync structured workouts to Garmin Connect — preferably on `huawei-sg` with IPv4 flags to avoid mainland China `thegarth.s3.amazonaws.com` failures and Node Happy Eyeballs cross-border `ETIMEDOUT`/`ENETUNREACH`: `ssh huawei-sg 'cd /opt/garmin-coach && node --no-network-family-autoselection --dns-result-order=ipv4first scripts/sync-workouts.js --days 5'` (or `--date YYYY-MM-DD` for targeted days).
 
 ## 2. Coaching Skill Activation
 - For any 800m training analysis, interval prescription, recovery/readiness gating, or injury/symptom guidance, load and follow `.agents/skills/800m-running-coach/SKILL.md`.
