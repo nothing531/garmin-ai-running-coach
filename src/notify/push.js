@@ -8,15 +8,22 @@ export async function sendNotifications(planResult, dashboardUrl) {
   const todayWorkout = coachPlan?.days?.[0];
 
   const lightEmoji =
-    readiness.light === 'green' ? '🟢' : readiness.light === 'yellow' ? '🟡' : '🔴';
+    readiness.light === 'green'
+      ? '🟢'
+      : readiness.light === 'yellow'
+        ? '🟡'
+        : readiness.light === 'red'
+          ? '🔴'
+          : '⚪';
 
-  const title = `${lightEmoji} AI 跑步教练晨报 | 准备度 ${readiness.score}/100`;
+  const scorePart = readiness.score != null ? `准备度 ${readiness.score}/100` : '生理数据不足';
+  const title = `${lightEmoji} AI 跑步教练晨报 | ${scorePart}`;
   const lines = [
     `状态：${readiness.lightLabel}`,
     `原因：${readiness.triggers.join('；')}`,
-    envToday
+    envToday && !envToday.weatherUnavailable && typeof envToday.tempC === 'number'
       ? `环境：${envToday.weatherText} ${envToday.tempC}°C | 湿度 ${envToday.humidityPct}% | 露点 ${envToday.dewPointC}°C | 风 ${envToday.windMs}m/s | 海拔 ${envToday.elevationMeters}m`
-      : null,
+      : '环境：气象接口暂不可用（暂停温度/风速/AQI配速修正）',
     todayWorkout
       ? `今日课表：[${todayWorkout.type}] ${todayWorkout.title}`
       : null,

@@ -33,6 +33,18 @@ export function getWeekdayIndexFromIso(isoDate) {
   return Number.isNaN(d.getTime()) ? new Date().getDay() : d.getUTCDay();
 }
 
+/**
+ * 计算两个 YYYY-MM-DD 日期相差的天数 (dateA - dateB)
+ */
+export function diffIsoDays(dateA, dateB) {
+  const a = String(dateA || '').slice(0, 10);
+  const b = String(dateB || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(a) || !/^\d{4}-\d{2}-\d{2}$/.test(b)) return null;
+  const msA = Date.parse(`${a}T12:00:00Z`);
+  const msB = Date.parse(`${b}T12:00:00Z`);
+  return Math.round((msA - msB) / 86400_000);
+}
+
 export function formatPace(secPerKm) {
   if (!Number.isFinite(secPerKm) || secPerKm <= 0) return '--:--';
   const rounded = Math.round(secPerKm);
@@ -99,7 +111,7 @@ export function estimateSessionLoad(activity, physiology = {}) {
 /**
  * 构建 Banister PMC 模型 (CTL 42天慢性负荷, ATL 7天急性负荷, TSB 状态平衡, ACWR)
  */
-export function computePmcSeries(activities, physiology = {}, days = 56) {
+export function computePmcSeries(activities, physiology = {}, days = 56, now = new Date()) {
   const dailyMap = new Map();
 
   for (const act of activities) {
@@ -109,7 +121,7 @@ export function computePmcSeries(activities, physiology = {}, days = 56) {
     dailyMap.set(date, (dailyMap.get(date) || 0) + load);
   }
 
-  const todayIso = getLocalIsoDate(0, physiology.timeZone || DEFAULT_TIMEZONE);
+  const todayIso = getLocalIsoDate(0, physiology.timeZone || DEFAULT_TIMEZONE, now);
   const todayUtc = new Date(`${todayIso}T12:00:00Z`);
   const start = new Date(todayUtc);
   start.setUTCDate(todayUtc.getUTCDate() - (days - 1));
@@ -266,7 +278,7 @@ export function computePolarizationStats(zoneSeconds) {
 /**
  * 统计近 8 个自然周按周跑量 & 80/20 心率区间分布
  */
-export function computeWeeklyAndZones(activities, physiology = {}) {
+export function computeWeeklyAndZones(activities, physiology = {}, now = new Date()) {
   const maxHr = physiology.maxHr || 190;
   const rhr = physiology.restingHrBaseline || 50;
   const lthr = physiology.lthr || Math.round(rhr + (maxHr - rhr) * 0.85);
@@ -283,7 +295,7 @@ export function computeWeeklyAndZones(activities, physiology = {}) {
   const weekBuckets = new Map();
 
   // 严格锚定截至本周的最近 8 个自然周（按周一对齐），无记录周补 0
-  const todayIso = getLocalIsoDate(0, physiology.timeZone || DEFAULT_TIMEZONE);
+  const todayIso = getLocalIsoDate(0, physiology.timeZone || DEFAULT_TIMEZONE, now);
   const todayUtc = new Date(`${todayIso}T12:00:00Z`);
   const diffToCurrentMon = (todayUtc.getUTCDay() + 6) % 7;
   const currentMon = new Date(todayUtc);
@@ -372,19 +384,22 @@ export function computeWeeklyAndZones(activities, physiology = {}) {
  * 计算当天环境的配速修正系数 (温度+露点, 海拔, 风速, AQI)
  */
 export function computeEnvironmentalAdjustment(envDay) {
-  if (!envDay) {
+  if (!envDay || envDay.weatherUnavailable || typeof envDay.tempC !== 'number') {
     return {
+      weatherAvailable: false,
+      weatherUnavailable: true,
       slowdownPct: 0,
       heatIndexSumF: null,
+      heatPct: 0,
       altitudePct: 0,
       windWarning: false,
       indoorRecommended: false,
-      summary: '环境温和，按基准配速执行'
+      summary: '气象数据暂不可用，暂停温湿度/风速/AQI配速修正，请按心率与现场天气控制强度'
     };
   }
 
-  const tempF = cToF(envDay.tempC ?? 18);
-  const dewF = cToF(envDay.dewPointC ?? 10);
+  const tempF = cToF(envDay.tempC);
+  const dewF = cToF(envDay.dewPointC ?? Math.max(-10, envDay.tempC - 8));
   const heatSum = Math.round(tempF + dewF);
 
   let heatPct = 0;
@@ -397,9 +412,9 @@ export function computeEnvironmentalAdjustment(envDay) {
   const altitudePct = elev > 1000 ? Math.round(((elev - 1000) / 1000) * 4.5 * 10) / 10 : 0;
 
   const windWarning = (envDay.windMs || 0) >= 5.0;
-  const aqi = envDay.usAqi ?? 50;
+  const aqi = envDay.usAqi;
   const weatherCode = envDay.weatherCode ?? 0;
-  const indoorRecommended = aqi > 150 || weatherCode >= 95;
+  const indoorRecommended = (aqi != null && aqi > 150) || weatherCode >= 95;
 
   const slowdownPct = Math.round((heatPct + altitudePct) * 10) / 10;
 
@@ -407,10 +422,12 @@ export function computeEnvironmentalAdjustment(envDay) {
   if (heatPct > 0) reasons.push(`热湿指数 ${heatSum}°F (配速放慢 ${heatPct}%)`);
   if (altitudePct > 0) reasons.push(`海拔 ${elev}m (配速放慢 ${altitudePct}%)`);
   if (windWarning) reasons.push(`风速 ${envDay.windMs}m/s，逆风段按心率控制`);
-  if (aqi > 150) reasons.push(`AQI ${aqi} 空气污染预警，建议改室内跑步机`);
+  if (aqi != null && aqi > 150) reasons.push(`AQI ${aqi} 空气污染预警，建议改室内跑步机`);
   if (weatherCode >= 95) reasons.push('雷暴天气预警，强制切换室内方案');
 
   return {
+    weatherAvailable: true,
+    weatherUnavailable: false,
     slowdownPct,
     heatIndexSumF: heatSum,
     heatPct,
@@ -422,58 +439,209 @@ export function computeEnvironmentalAdjustment(envDay) {
 }
 
 /**
- * 晨间「红绿灯」生理准备度评分与自动调课判断
+ * 晨间「红绿灯」生理准备度评分与数据完整性/时效判断
+ * - 严格区分：实测 (measured/demo)、跨日缓存 (stale_cache)、配置基线 (config_baseline)、缺失 (missing)
+ * - 绝不使用默认值伪装“状态良好”；ACWR 仅作结合症状与历史负荷复核的参考提示，不独立触发停课
  */
-export function evaluateReadiness(wellness, pmcLatest) {
-  const hrvCurrent = wellness?.hrvToday ?? wellness?.hrv7dAvg ?? 55;
-  const hrvBaseline = wellness?.hrv7dAvg ?? hrvCurrent;
-  const hrvRatio = hrvBaseline > 0 ? hrvCurrent / hrvBaseline : 1;
+export function evaluateReadiness(wellness, pmcLatest, options = {}) {
+  const w = wellness || {};
+  const prov = w.provenance || {};
+  const expectedDate = options.expectedDate || w.date || null;
 
-  const sleepScore = wellness?.sleepScore ?? 78;
-  const bodyBattery = wellness?.bodyBatteryMorning ?? 75;
-  const rhrCurrent = wellness?.rhrToday ?? wellness?.rhr7dAvg ?? 50;
-  const rhrBaseline = wellness?.rhr7dAvg ?? rhrCurrent;
-  const rhrDelta = rhrCurrent - rhrBaseline;
-  const acwr = pmcLatest?.acwr ?? 1.0;
+  const missingFields = [];
+  const staleFields = [];
+  const expiredFields = [];
+  const baselineFields = [];
+  const normalizedProv = {};
 
-  // 综合评分 (0-100)
+  function inspectMetric(key, rawValue, fallbackDate = w.date || null) {
+    const meta = prov[key] || {};
+    const src = meta.source || (Number.isFinite(rawValue) ? 'measured' : 'missing');
+    const date = meta.date ?? (Number.isFinite(rawValue) ? fallbackDate : null);
+    normalizedProv[key] = { source: src, date };
+
+    if (src === 'config_baseline') {
+      baselineFields.push(key);
+      return { valid: false, stale: false, value: null };
+    }
+    if (src === 'missing' || !Number.isFinite(rawValue)) {
+      missingFields.push(key);
+      return { valid: false, stale: false, value: null };
+    }
+
+    const ageDays = expectedDate && date ? diffIsoDays(expectedDate, date) : 0;
+    if (ageDays !== null && ageDays >= 2) {
+      expiredFields.push(`${key}(${date})`);
+      return { valid: false, stale: true, value: null };
+    }
+    const isStale = src === 'stale_cache' || (ageDays !== null && ageDays >= 1);
+    if (isStale) {
+      staleFields.push(`${key}(${date || '昨日'})`);
+    }
+    return { valid: true, stale: isStale, value: rawValue };
+  }
+
+  const hrvM = inspectMetric('hrv', w.hrvToday);
+  const rhrM = inspectMetric('rhr', w.rhrToday);
+  const sleepM = inspectMetric('sleep', w.sleepScore);
+  const bbM = inspectMetric('bodyBattery', w.bodyBatteryMorning);
+
+  const availableSignals = [hrvM, rhrM, sleepM, bbM].filter((m) => m.valid).length;
+  const hrvBaseline = Number.isFinite(w.hrv7dAvg) && w.hrv7dAvg > 0
+    ? w.hrv7dAvg
+    : Number.isFinite(w.hrvBaselineLow) && Number.isFinite(w.hrvBaselineHigh)
+      ? Math.round((w.hrvBaselineLow + w.hrvBaselineHigh) / 2)
+      : null;
+  const hrvRatio = hrvM.valid && hrvBaseline ? hrvM.value / hrvBaseline : null;
+
+  const rhrBaseline = Number.isFinite(w.rhr7dAvg) && w.rhr7dAvg > 0 ? w.rhr7dAvg : null;
+  const rhrDelta = rhrM.valid && rhrBaseline ? rhrM.value - rhrBaseline : null;
+
+  const ctl = Number.isFinite(pmcLatest?.ctl) ? pmcLatest.ctl : null;
+  const acwr = Number.isFinite(pmcLatest?.acwr) ? pmcLatest.acwr : null;
+  const advisories = [];
+
+  if (ctl !== null && ctl < 10) {
+    advisories.push(`长期体能底座偏低 (CTL=${ctl})，ACWR 数学比值暂不作为负荷预警依据`);
+  } else if (acwr !== null && acwr > 1.35) {
+    advisories.push(`负荷变化提示：ACWR=${acwr}（需结合症状、近期跑量增量与 HRV/晨脉综合复核，不作独立伤病或停课依据）`);
+  }
+
+  // 检测已测得维度中的明确警告信号（即使缺失部分维度，只要实测已报警也不能掩盖风险）
+  const redReasons = [];
+  const yellowReasons = [];
+
+  if (hrvRatio !== null && hrvRatio < 0.85) {
+    redReasons.push(`HRV 明显低于个人基线 (${hrvM.value}ms vs ${hrvBaseline}ms)`);
+  } else if (hrvRatio !== null && hrvRatio < 0.94) {
+    yellowReasons.push(`HRV 处于基线下沿 (${hrvM.value}ms vs ${hrvBaseline}ms)`);
+  }
+  if (w.hrvStatus === 'UNBALANCED' || w.hrvStatus === 'LOW' || w.hrvStatus === 'POOR') {
+    if (hrvRatio === null || hrvRatio >= 0.85) {
+      if (!yellowReasons.some((t) => t.includes('HRV'))) {
+        yellowReasons.push(`Garmin HRV 状态为 ${w.hrvStatus}`);
+      }
+    }
+  }
+
+  if (rhrDelta !== null && rhrDelta >= 5) {
+    redReasons.push(`晨脉显著抬升 (+${Math.round(rhrDelta * 10) / 10} bpm)`);
+  } else if (rhrDelta !== null && rhrDelta >= 3) {
+    yellowReasons.push(`静息心率略偏高 (+${Math.round(rhrDelta * 10) / 10} bpm)`);
+  }
+
+  if (bbM.valid && bbM.value < 50) {
+    redReasons.push(`晨起身体电量过低 (${bbM.value})`);
+  } else if (bbM.valid && bbM.value < 65) {
+    yellowReasons.push(`身体电量一般 (${bbM.value})`);
+  }
+
+  if (sleepM.valid && sleepM.value < 60) {
+    redReasons.push(`睡眠评分过低 (${sleepM.value})`);
+  } else if (sleepM.valid && sleepM.value < 75) {
+    yellowReasons.push(`睡眠评分不足 (${sleepM.value})`);
+  } else if (!sleepM.valid && Number.isFinite(w.sleepHours) && w.sleepHours < 5.5) {
+    yellowReasons.push(`睡眠时长偏短 (${w.sleepHours}h)`);
+  }
+
+  const dataQualityStatus =
+    availableSignals < 2 || (!hrvM.valid && !sleepM.valid)
+      ? 'insufficient'
+      : expiredFields.length > 0 || missingFields.length > 0 || baselineFields.length > 0
+        ? 'partial'
+        : staleFields.length > 0
+          ? 'stale'
+          : 'complete';
+
+  const dataQuality = {
+    status: dataQualityStatus,
+    expectedDate,
+    dataDate: w.date || null,
+    availableSignals,
+    totalSignals: 4,
+    missingFields,
+    staleFields,
+    expiredFields,
+    baselineFields,
+    provenance: normalizedProv
+  };
+
+  // 若无足够实测数据且未触发明确红灯警报：绝不伪造高分或绿灯
+  const lackReliableEvidence =
+    availableSignals < 2 ||
+    (!hrvM.valid && !sleepM.valid) ||
+    (availableSignals < 3 && redReasons.length === 0);
+
+  if (lackReliableEvidence && redReasons.length === 0) {
+    const gapNotes = [];
+    if (missingFields.length > 0) gapNotes.push(`缺失: ${missingFields.join(', ')}`);
+    if (expiredFields.length > 0) gapNotes.push(`过期: ${expiredFields.join(', ')}`);
+    if (baselineFields.length > 0) gapNotes.push(`仅配置基线(非实测): ${baselineFields.join(', ')}`);
+    if (staleFields.length > 0) gapNotes.push(`跨日缓存: ${staleFields.join(', ')}`);
+    return {
+      light: 'insufficient_data',
+      lightLabel: '数据不足 · 无法可靠判断',
+      score: null,
+      hrvRatio: hrvRatio !== null ? Math.round(hrvRatio * 100) / 100 : null,
+      rhrDelta: rhrDelta !== null ? Math.round(rhrDelta * 10) / 10 : null,
+      triggers: [
+        `关键生理数据不足，无法可靠判断恢复状态${gapNotes.length > 0 ? `（${gapNotes.join('；')}）` : ''}`,
+        ...yellowReasons
+      ],
+      advisories,
+      dataQuality
+    };
+  }
+
+  // 基于实际有效信号计算评分（不把缺失默认值当正面加分）
   let score = 80;
-  score += Math.max(-20, Math.min(12, (hrvRatio - 1) * 80));
-  score += Math.max(-15, Math.min(10, (sleepScore - 75) * 0.5));
-  score += Math.max(-15, Math.min(10, (bodyBattery - 70) * 0.4));
-  if (rhrDelta > 0) score -= Math.min(20, rhrDelta * 3.5);
-  if (acwr > 1.35) score -= Math.min(18, (acwr - 1.35) * 45);
-  else if (acwr < 0.75) score += 2;
+  if (hrvRatio !== null) score += Math.max(-20, Math.min(12, (hrvRatio - 1) * 80));
+  if (sleepM.valid) score += Math.max(-15, Math.min(10, (sleepM.value - 75) * 0.5));
+  if (bbM.valid) score += Math.max(-15, Math.min(10, (bbM.value - 70) * 0.4));
+  if (rhrDelta !== null && rhrDelta > 0) score -= Math.min(20, rhrDelta * 3.5);
+  if (ctl !== null && ctl >= 10 && acwr !== null && acwr > 1.5) {
+    score -= Math.min(10, (acwr - 1.5) * 20);
+  }
   score = Math.round(Math.max(15, Math.min(99, score)));
 
-  // 红绿灯规则
   let light = 'green';
-  const triggers = [];
+  let triggers = [];
 
-  if (hrvRatio < 0.85 || rhrDelta >= 5 || bodyBattery < 50 || acwr > 1.35 || sleepScore < 60) {
+  if (redReasons.length > 0) {
     light = 'red';
-    if (hrvRatio < 0.85) triggers.push(`HRV 跌破基线 (${hrvCurrent}ms vs ${hrvBaseline}ms)`);
-    if (rhrDelta >= 5) triggers.push(`晨脉飙升 +${rhrDelta} bpm`);
-    if (bodyBattery < 50) triggers.push(`晨起身体电量过低 (${bodyBattery})`);
-    if (acwr > 1.35) triggers.push(`ACWR=${acwr} 进入高负荷伤病预警区`);
-    if (sleepScore < 60) triggers.push(`睡眠评分过低 (${sleepScore})`);
-  } else if (hrvRatio < 0.94 || rhrDelta >= 3 || bodyBattery < 65 || sleepScore < 75 || acwr > 1.25) {
+    triggers = [...redReasons];
+  } else if (yellowReasons.length > 0) {
     light = 'yellow';
-    if (hrvRatio < 0.94) triggers.push('HRV 处于基线下沿');
-    if (rhrDelta >= 3) triggers.push(`静息心率略偏高 (+${rhrDelta} bpm)`);
-    if (bodyBattery < 65) triggers.push(`身体电量一般 (${bodyBattery})`);
-    if (sleepScore < 75) triggers.push(`睡眠评分不足 (${sleepScore})`);
-    if (acwr > 1.25) triggers.push(`ACWR=${acwr} 负荷偏高`);
+    triggers = [...yellowReasons];
+  } else if (staleFields.length >= 2) {
+    light = 'yellow';
+    triggers = [`多项核心生理数据为跨日缓存（${staleFields.join('、')}），保守按降量控强处理`];
+  } else if (missingFields.length > 0 || staleFields.length > 0 || baselineFields.length > 0) {
+    const caveat = [
+      missingFields.length ? `缺失 ${missingFields.join('/')}` : null,
+      staleFields.length ? `缓存 ${staleFields.join('/')}` : null,
+      baselineFields.length ? `基线 ${baselineFields.join('/')}` : null
+    ].filter(Boolean).join('，');
+    triggers = [`可用实测指标正常（${caveat}，暂未达到全维度校准）`];
   } else {
-    triggers.push('HRV、晨脉、睡眠与负荷比均处于理想区间');
+    triggers = ['实测 HRV、晨脉、睡眠与身体电量均处于良性区间'];
   }
+
+  const labelMap = {
+    green: '绿灯 · 全力推进',
+    yellow: '黄灯 · 降量控强',
+    red: '红灯 · 强制恢复',
+    insufficient_data: '数据不足 · 无法可靠判断'
+  };
 
   return {
     light,
-    lightLabel: light === 'green' ? '绿灯 · 全力推进' : light === 'yellow' ? '黄灯 · 降量控强' : '红灯 · 强制恢复',
+    lightLabel: labelMap[light],
     score,
-    hrvRatio: Math.round(hrvRatio * 100) / 100,
-    rhrDelta: Math.round(rhrDelta * 10) / 10,
-    triggers
+    hrvRatio: hrvRatio !== null ? Math.round(hrvRatio * 100) / 100 : null,
+    rhrDelta: rhrDelta !== null ? Math.round(rhrDelta * 10) / 10 : null,
+    triggers,
+    advisories,
+    dataQuality
   };
 }

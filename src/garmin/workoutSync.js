@@ -1,5 +1,6 @@
 import GarminConnectModule from '@likenttt/garmin-connect';
 import { parsePaceSecPerKm } from '../science/metrics.js';
+import { assertCoachPlanPassed } from '../coach/planRules.js';
 
 const GarminConnect =
   GarminConnectModule.GarminConnect ||
@@ -11,14 +12,24 @@ const RUNNING_DAY_TYPES = new Set(['E', 'LSD', 'M', 'T', 'I', 'R']);
 
 export function parseHrTargetRange(hrText) {
   if (!hrText) return null;
-  const m = String(hrText).match(/(\d{2,3})\s*[-–~]\s*(\d{2,3})\s*bpm/i);
-  if (!m) return null;
-  const low = Number(m[1]);
-  const high = Number(m[2]);
-  if (!Number.isFinite(low) || !Number.isFinite(high) || low < 70 || high > 230 || low >= high) {
-    return null;
+  const s = String(hrText);
+  const m = s.match(/(\d{2,3})\s*[-–~]\s*(\d{2,3})\s*bpm/i);
+  if (m) {
+    const low = Number(m[1]);
+    const high = Number(m[2]);
+    if (!Number.isFinite(low) || !Number.isFinite(high) || low < 70 || high > 230 || low >= high) {
+      return null;
+    }
+    return { low, high };
   }
-  return { low, high };
+  const ceilMatch = s.match(/(?:<=|≤|不超过|低于)\s*(\d{2,3})\s*bpm/i);
+  if (ceilMatch) {
+    const high = Number(ceilMatch[1]);
+    if (Number.isFinite(high) && high >= 110 && high <= 230) {
+      return { low: Math.max(95, high - 22), high };
+    }
+  }
+  return null;
 }
 
 export function parseIntervalSpec(text) {
@@ -29,7 +40,7 @@ export function parseIntervalSpec(text) {
   const rawLen = Number(m[2]);
   const unit = m[3].toLowerCase();
   const meters = unit === 'km' || unit === '公里' ? Math.round(rawLen * 1000) : Math.round(rawLen);
-  if (!Number.isFinite(count) || !Number.isFinite(meters) || count < 2 || meters < 30) {
+  if (!Number.isFinite(count) || !Number.isFinite(meters) || count < 2 || meters < 20) {
     return null;
   }
   return { count, meters };
@@ -37,8 +48,8 @@ export function parseIntervalSpec(text) {
 
 export function parseRestSeconds(text, fallbackSec = 90) {
   const s = String(text || '');
-  const secMatch = s.match(/(?:全休|休|休息|走休|慢跑恢复|恢复)[^\d\n]{0,6}(\d{2,3})\s*(?:秒|s|sec)/i)
-    || s.match(/(\d{2,3})\s*s\s*(?:全休|走休|恢复)/i);
+  const secMatch = s.match(/(?:全休|休|休息|走休|慢跑恢复|恢复)[^\d\n]{0,6}(\d{1,3})\s*(?:秒|s|sec)/i)
+    || s.match(/(\d{1,3})\s*s\s*(?:全休|走休|恢复)/i);
   if (secMatch) {
     return Number(secMatch[1]);
   }
@@ -157,7 +168,19 @@ export function buildGarminWorkoutFromDay(day, options = {}) {
 
   const type = String(day.type || '').toUpperCase();
   const distanceKm = Number(day.plannedDistanceKm ?? day.distanceKm ?? 0);
-  if (!RUNNING_DAY_TYPES.has(type) || distanceKm <= 0) {
+  const durationMin = Number(day.plannedDurationMin ?? day.durationMin ?? 0);
+  const hasRunnableSteps =
+    Array.isArray(day.steps) &&
+    day.steps.some((s) => {
+      const k = String(s?.kind || '').toLowerCase();
+      return (
+        ['warmup', 'steady', 'interval', 'strides', 'cooldown'].includes(k) &&
+        (Number(s?.distanceKm || 0) > 0 ||
+          Number(s?.distanceMeters || 0) > 0 ||
+          Number(s?.durationMin || 0) > 0)
+      );
+    });
+  if (!RUNNING_DAY_TYPES.has(type) || (distanceKm <= 0 && durationMin <= 0 && !hasRunnableSteps)) {
     return null;
   }
 
@@ -170,7 +193,169 @@ export function buildGarminWorkoutFromDay(day, options = {}) {
   const steps = [];
   let order = 1;
 
-  if (type === 'E' || type === 'LSD') {
+  if (Array.isArray(day.steps) && day.steps.length > 0) {
+    const hrTarget = hrRange
+      ? { targetTypeKey: 'heart.rate.zone', targetValueOne: hrRange.low, targetValueTwo: hrRange.high }
+      : { targetTypeKey: 'no.target', targetValueOne: null, targetValueTwo: null };
+
+    for (const s of day.steps) {
+      const kind = String(s.kind || 'steady').toLowerCase();
+      if (kind === 'strength' || kind === 'cross' || kind === 'rest') {
+        continue;
+      }
+      if (kind === 'warmup' || kind === 'cooldown') {
+        const distM = Number(s.distanceKm || 0) > 0 ? Math.round(Number(s.distanceKm) * 1000) : null;
+        const durSec = !distM && Number(s.durationMin || 0) > 0 ? Math.round(Number(s.durationMin) * 60) : null;
+        steps.push(
+          makeExecutableStep({
+            stepOrder: order++,
+            stepTypeKey: kind,
+            description: s.description || (kind === 'warmup' ? day.warmup : day.cooldown),
+            endConditionKey: distM ? 'distance' : durSec ? 'time' : 'lap.button',
+            endConditionValue: distM || durSec || null,
+            unitKey: distM ? 'meter' : null,
+            targetTypeKey: 'no.target'
+          })
+        );
+      } else if (kind === 'steady') {
+        const stepDistM = Number(s.distanceKm || 0) > 0 ? Math.round(Number(s.distanceKm) * 1000) : null;
+        const stepDurSec = !stepDistM && Number(s.durationMin || 0) > 0 ? Math.round(Number(s.durationMin) * 60) : null;
+        const fallbackDistM = !stepDistM && !stepDurSec && distanceKm > 0 ? Math.max(200, Math.round(distanceKm * 1000)) : null;
+        const fallbackDurSec = !stepDistM && !stepDurSec && !fallbackDistM && durationMin > 0 ? Math.round(durationMin * 60) : null;
+        const useDist = stepDistM ?? fallbackDistM;
+        const useDur = stepDurSec ?? fallbackDurSec;
+        const stepHr = parseHrTargetRange(s.targetHr) || hrRange;
+        const stepPace = buildPaceSpeedRange(s.pace || day.correctedPace || day.basePace, type === 'T' ? 0.025 : 0.035);
+        steps.push(
+          makeExecutableStep({
+            stepOrder: order++,
+            stepTypeKey: 'interval',
+            description: s.description || day.mainSetSummary,
+            endConditionKey: useDist ? 'distance' : useDur ? 'time' : 'lap.button',
+            endConditionValue: useDist || useDur || null,
+            unitKey: useDist ? 'meter' : null,
+            ...(stepHr
+              ? { targetTypeKey: 'heart.rate.zone', targetValueOne: stepHr.low, targetValueTwo: stepHr.high }
+              : stepPace
+                ? { targetTypeKey: 'pace.zone', targetValueOne: stepPace.fastMs, targetValueTwo: stepPace.slowMs }
+                : { targetTypeKey: 'no.target', targetValueOne: null, targetValueTwo: null })
+          })
+        );
+      } else if (kind === 'interval' || kind === 'strides') {
+        const reps = Math.max(1, Math.round(Number(s.reps ?? 1)));
+        const meters = Math.max(20, Math.round(Number(s.distanceMeters ?? 200)));
+        const rawRest = s.restSec !== undefined && s.restSec !== null ? Number(s.restSec) : 90;
+        const restSec = Number.isFinite(rawRest) ? Math.max(0, Math.round(rawRest)) : 90;
+        const isShort = kind === 'strides' || type === 'R' || meters <= 250;
+        const stepPace = buildPaceSpeedRange(s.pace || day.correctedPace || day.basePace, type === 'T' ? 0.025 : 0.035);
+        const repTarget = !isShort && stepPace
+          ? { targetTypeKey: 'pace.zone', targetValueOne: stepPace.fastMs, targetValueTwo: stepPace.slowMs }
+          : !isShort && hrRange
+            ? hrTarget
+            : { targetTypeKey: 'no.target', targetValueOne: null, targetValueTwo: null };
+
+        if (restSec === 0 && reps === 1) {
+          steps.push(
+            makeExecutableStep({
+              stepOrder: order++,
+              stepTypeKey: 'interval',
+              description: s.description || `${meters}m`,
+              endConditionKey: 'distance',
+              endConditionValue: meters,
+              unitKey: 'meter',
+              ...repTarget
+            })
+          );
+        } else {
+          const groupOrder = order++;
+          const repOrder = order++;
+          const groupSteps = [
+            makeExecutableStep({
+              stepOrder: repOrder,
+              childStepId: 1,
+              stepTypeKey: 'interval',
+              description: s.description || `${meters}m`,
+              endConditionKey: 'distance',
+              endConditionValue: meters,
+              unitKey: 'meter',
+              ...repTarget
+            })
+          ];
+          if (restSec > 0) {
+            const recOrder = order++;
+            groupSteps.push(
+              makeExecutableStep({
+                stepOrder: recOrder,
+                childStepId: 1,
+                stepTypeKey: 'recovery',
+                description: `恢复 ${restSec} 秒`,
+                endConditionKey: 'time',
+                endConditionValue: restSec,
+                targetTypeKey: 'no.target'
+              })
+            );
+          }
+          steps.push(
+            makeRepeatGroup({
+              stepOrder: groupOrder,
+              iterations: reps,
+              steps: groupSteps
+            })
+          );
+        }
+      }
+    }
+  } else if ((type === 'E' || type === 'LSD') && totalMeters <= 0 && durationMin > 0) {
+    const totalSec = Math.round(durationMin * 60);
+    const warmupSec = durationMin >= 20 ? 300 : 0;
+    const cooldownSec = durationMin >= 25 ? 180 : 0;
+    const mainSec = Math.max(300, totalSec - warmupSec - cooldownSec);
+    const warmupHr = hrRange
+      ? {
+          targetTypeKey: 'heart.rate.zone',
+          targetValueOne: Math.max(95, hrRange.low - 10),
+          targetValueTwo: Math.max(hrRange.low + 5, hrRange.high - 4)
+        }
+      : { targetTypeKey: 'no.target', targetValueOne: null, targetValueTwo: null };
+    const mainHr = hrRange
+      ? { targetTypeKey: 'heart.rate.zone', targetValueOne: hrRange.low, targetValueTwo: hrRange.high }
+      : { targetTypeKey: 'no.target', targetValueOne: null, targetValueTwo: null };
+
+    if (warmupSec > 0) {
+      steps.push(
+        makeExecutableStep({
+          stepOrder: order++,
+          stepTypeKey: 'warmup',
+          description: day.warmup || '慢启动热身',
+          endConditionKey: 'time',
+          endConditionValue: warmupSec,
+          ...warmupHr
+        })
+      );
+    }
+    steps.push(
+      makeExecutableStep({
+        stepOrder: order++,
+        stepTypeKey: 'interval',
+        description: day.mainSetSummary || `${durationMin} 分钟有氧轻松跑`,
+        endConditionKey: 'time',
+        endConditionValue: mainSec,
+        ...mainHr
+      })
+    );
+    if (cooldownSec > 0) {
+      steps.push(
+        makeExecutableStep({
+          stepOrder: order++,
+          stepTypeKey: 'cooldown',
+          description: day.cooldown || '慢走冷身',
+          endConditionKey: 'time',
+          endConditionValue: cooldownSec,
+          targetTypeKey: 'no.target'
+        })
+      );
+    }
+  } else if (type === 'E' || type === 'LSD') {
     const hasStrides =
       intervalSpec && intervalSpec.meters <= 150 && intervalSpec.count <= 12 &&
       /strides|加速|神经/i.test(combinedText);
@@ -294,38 +479,44 @@ export function buildGarminWorkoutFromDay(day, options = {}) {
 
       const groupOrder = order++;
       const repStepOrder = order++;
-      const recStepOrder = order++;
+      const groupSteps = [
+        makeExecutableStep({
+          stepOrder: repStepOrder,
+          childStepId: 1,
+          stepTypeKey: 'interval',
+          description: isShortSprint
+            ? `高速分段 ${intervalSpec.meters}m（看秒表与跑姿质量，不追心率）`
+            : day.mainSetSummary || `间歇 ${intervalSpec.meters}m`,
+          endConditionKey: 'distance',
+          endConditionValue: intervalSpec.meters,
+          unitKey: 'meter',
+          ...repTarget
+        })
+      ];
+      if (restSec > 0) {
+        const recStepOrder = order++;
+        groupSteps.push(
+          makeExecutableStep({
+            stepOrder: recStepOrder,
+            childStepId: 1,
+            stepTypeKey: 'recovery',
+            description: `恢复 ${restSec} 秒`,
+            endConditionKey: 'time',
+            endConditionValue: restSec,
+            targetTypeKey: 'no.target'
+          })
+        );
+      }
       steps.push(
         makeRepeatGroup({
           stepOrder: groupOrder,
           iterations: intervalSpec.count,
-          steps: [
-            makeExecutableStep({
-              stepOrder: repStepOrder,
-              childStepId: 1,
-              stepTypeKey: 'interval',
-              description: isShortSprint
-                ? `高速分段 ${intervalSpec.meters}m（看秒表与跑姿质量，不追心率）`
-                : day.mainSetSummary || `间歇 ${intervalSpec.meters}m`,
-              endConditionKey: 'distance',
-              endConditionValue: intervalSpec.meters,
-              unitKey: 'meter',
-              ...repTarget
-            }),
-            makeExecutableStep({
-              stepOrder: recStepOrder,
-              childStepId: 1,
-              stepTypeKey: 'recovery',
-              description: `恢复 ${restSec} 秒`,
-              endConditionKey: 'time',
-              endConditionValue: restSec,
-              targetTypeKey: 'no.target'
-            })
-          ]
+          steps: groupSteps
         })
       );
     } else {
       const explicitDistMatch = combinedText.match(/(\d{3,4})\s*m(?:评估|测试|计时|稳态)/i);
+      const useTimeOnly = !explicitDistMatch && totalMeters <= 0 && durationMin > 0;
       const mainMeters = explicitDistMatch ? Number(explicitDistMatch[1]) : Math.max(800, totalMeters - 1500);
       const mainTarget = hrRange
         ? {
@@ -346,9 +537,9 @@ export function buildGarminWorkoutFromDay(day, options = {}) {
           stepOrder: order++,
           stepTypeKey: 'interval',
           description: day.mainSetSummary || day.title,
-          endConditionKey: 'distance',
-          endConditionValue: mainMeters,
-          unitKey: 'meter',
+          endConditionKey: useTimeOnly ? 'time' : 'distance',
+          endConditionValue: useTimeOnly ? Math.round(durationMin * 60) : mainMeters,
+          unitKey: useTimeOnly ? null : 'meter',
           ...mainTarget
         })
       );
@@ -363,6 +554,10 @@ export function buildGarminWorkoutFromDay(day, options = {}) {
         targetTypeKey: 'no.target'
       })
     );
+  }
+
+  if (steps.length === 0) {
+    return null;
   }
 
   const noteParts = [day.mainSetSummary, day.coachTip].filter(Boolean).join(' ｜ ');
@@ -383,10 +578,7 @@ export function buildGarminWorkoutFromDay(day, options = {}) {
 
 export async function createGarminWriteSession({ region = 'cn', email, password, sessionJson } = {}) {
   const domain = region === 'cn' ? 'garmin.cn' : 'garmin.com';
-  const gc = new GarminConnect(
-    email && password ? { username: email, password } : undefined,
-    domain
-  );
+  const gc = new GarminConnect({ username: email, password }, domain);
 
   if (sessionJson) {
     try {
@@ -413,10 +605,17 @@ export async function createGarminWriteSession({ region = 'cn', email, password,
  * 将未来 N 天内的跑步课表幂等写入 Garmin Connect 训练库并排期到训练日历
  */
 export async function syncCoachWorkoutsToGarmin(coachPlan, options = {}) {
+  if (!coachPlan || !Array.isArray(coachPlan.days) || coachPlan.days.length === 0) {
+    throw new Error('coachPlan.days 缺失或为空，无法生成或同步 Garmin 课表（请确认读取的是私有完整数据 data/private/dashboard-payload.json，而非公开脱敏 stub）');
+  }
+  assertCoachPlanPassed(coachPlan, {
+    requireReport: Boolean(options.requireValidatedPlan),
+    action: '同步至 Garmin Connect'
+  });
   const daysLimit = Math.max(1, Number(options.days || 5));
   const prefix = options.prefix || '[AI]';
   const dryRun = Boolean(options.dryRun);
-  const allDays = Array.isArray(coachPlan?.days) ? coachPlan.days : [];
+  const allDays = coachPlan.days;
   const windowDays = options.date
     ? allDays.filter((d) => d.date === options.date)
     : allDays.slice(0, daysLimit);
@@ -441,42 +640,54 @@ export async function syncCoachWorkoutsToGarmin(coachPlan, options = {}) {
 
   const { gc, tokens, reusedSession } = await createGarminWriteSession(options.auth || {});
   const existing = (await gc.getWorkouts(0, 100)) || [];
-  const targetMmdds = new Set(built.map((x) => x.mmdd).filter(Boolean));
-
-  // 清理当前同步窗口内旧的同前缀课表（含当天因红灯熔断由跑步转为休息的日期）
-  let deletedCount = 0;
+  const oldWorkoutIdsByDate = new Map(built.map(({ mmdd }) => [mmdd, []]));
   for (const w of existing) {
     const name = String(w?.workoutName || '');
-    if (!name.startsWith(prefix)) continue;
+    if (!w?.workoutId || !name.startsWith(`${prefix} `)) continue;
     const tagMatch = name.slice(prefix.length).trim().match(/^(\d{2}-\d{2})\b/);
-    if (tagMatch && targetMmdds.has(tagMatch[1])) {
-      await gc.deleteWorkout({ workoutId: String(w.workoutId) });
-      deletedCount += 1;
-    }
+    if (tagMatch) oldWorkoutIdsByDate.get(tagMatch[1])?.push(String(w.workoutId));
   }
 
+  let deletedCount = 0;
   const synced = [];
   const skipped = [];
 
   for (const item of built) {
-    if (!item.workout) {
+    if (item.workout) {
+      const created = await gc.addWorkout(item.workout);
+      if (!created?.workoutId) {
+        throw new Error(`创建课表失败：${item.day.date}`);
+      }
+      let scheduled;
+      try {
+        scheduled = await gc.client.post(
+          `${gc.url.GC_API}/workout-service/schedule/${created.workoutId}`,
+          { date: item.day.date }
+        );
+      } catch (err) {
+        // 撤回本次新建的课表，保留原有排期。
+        try {
+          await gc.deleteWorkout({ workoutId: String(created.workoutId) });
+        } catch {
+          throw new Error(`Garmin 排期及撤回新课表均失败：${item.day.date}`, { cause: err });
+        }
+        throw new Error(`Garmin 排期失败：${item.day.date}`, { cause: err });
+      }
+      synced.push({
+        date: item.day.date,
+        workoutId: created.workoutId,
+        workoutScheduleId: scheduled?.workoutScheduleId ?? null,
+        workoutName: created.workoutName
+      });
+    } else {
       skipped.push({ date: item.day.date, type: item.day.type });
-      continue;
     }
-    const created = await gc.addWorkout(item.workout);
-    if (!created?.workoutId) {
-      throw new Error(`创建课表失败：${item.workout.workoutName}`);
+
+    // 新课排期后再移除旧课。改为休息时清理当天的旧跑步课。
+    for (const workoutId of oldWorkoutIdsByDate.get(item.mmdd)) {
+      await gc.deleteWorkout({ workoutId });
+      deletedCount += 1;
     }
-    const scheduled = await gc.client.post(
-      `${gc.url.GC_API}/workout-service/schedule/${created.workoutId}`,
-      { date: item.day.date }
-    );
-    synced.push({
-      date: item.day.date,
-      workoutId: created.workoutId,
-      workoutScheduleId: scheduled?.workoutScheduleId ?? null,
-      workoutName: created.workoutName
-    });
   }
 
   return {

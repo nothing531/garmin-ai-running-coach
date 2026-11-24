@@ -1,13 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { syncCoachWorkoutsToGarmin } from '../src/garmin/workoutSync.js';
+import { assertCoachPlanPassed } from '../src/coach/planRules.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
 
-async function loadDotEnv() {
-  const envPath = path.join(ROOT_DIR, '.env');
+async function loadDotEnv(rootDir = ROOT_DIR) {
+  const envPath = path.join(rootDir, '.env');
   try {
     const raw = await fs.readFile(envPath, 'utf8');
     for (const line of raw.split(/\r?\n/)) {
@@ -29,8 +30,8 @@ async function loadDotEnv() {
   }
 }
 
-async function upsertEnvSessionJson(tokens) {
-  const envPath = path.join(ROOT_DIR, '.env');
+async function upsertEnvSessionJson(tokens, rootDir = ROOT_DIR) {
+  const envPath = path.join(rootDir, '.env');
   const serialized = JSON.stringify(tokens);
   let content = '';
   try {
@@ -49,8 +50,8 @@ async function upsertEnvSessionJson(tokens) {
   await fs.writeFile(envPath, `${lines.filter((l, i) => i < lines.length - 1 || l !== '').join('\n')}\n`, 'utf8');
 }
 
-function parseCliArgs(argv) {
-  const opts = { days: 5, dryRun: false, date: null, saveSession: true };
+export function parseCliArgs(argv) {
+  const opts = { days: 5, dryRun: false, date: null, saveSession: true, input: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--dry-run') opts.dryRun = true;
@@ -59,28 +60,50 @@ function parseCliArgs(argv) {
       opts.days = Math.max(1, Number(argv[++i]) || 5);
     } else if (arg === '--date' && argv[i + 1]) {
       opts.date = argv[++i];
+    } else if (arg === '--input' && argv[i + 1]) {
+      opts.input = argv[++i];
     }
   }
   return opts;
 }
 
-async function main() {
-  await loadDotEnv();
-  const opts = parseCliArgs(process.argv.slice(2));
+/**
+ * 从私有完整负载（默认 data/private/dashboard-payload.json）加载已校验的 coachPlan 并执行 Garmin 同步
+ */
+export async function runWorkoutSyncCli(opts = {}, rootDir = ROOT_DIR) {
+  const payloadPath = opts.input
+    ? path.resolve(rootDir, opts.input)
+    : path.join(rootDir, 'data', 'private', 'dashboard-payload.json');
 
-  const latestPath = path.join(ROOT_DIR, 'dist', 'data', 'latest.json');
-  let latest;
+  let payload;
   try {
-    latest = JSON.parse(await fs.readFile(latestPath, 'utf8'));
+    payload = JSON.parse(await fs.readFile(payloadPath, 'utf8'));
   } catch {
-    throw new Error('未找到 dist/data/latest.json，请先执行 npm run coach 生成当期课表。');
+    throw new Error(
+      `未找到私有完整课表文件 ${path.relative(rootDir, payloadPath)}，请先运行 npm run coach 生成最新课表。`
+    );
   }
 
-  const region = process.env.GARMIN_REGION || latest?.config?.region || 'cn';
-  const result = await syncCoachWorkoutsToGarmin(latest.coachPlan, {
-    days: opts.days,
-    date: opts.date,
-    dryRun: opts.dryRun,
+  if (payload?.publicMode && !payload?.coachPlan) {
+    throw new Error(
+      `${path.relative(rootDir, payloadPath)} 是公开脱敏存根（不含个人课表），请改用 data/private/dashboard-payload.json。`
+    );
+  }
+
+  if (!Array.isArray(payload?.coachPlan?.days) || payload.coachPlan.days.length === 0) {
+    throw new Error(`${path.relative(rootDir, payloadPath)} 缺少有效 coachPlan.days，拒绝空同步。`);
+  }
+  assertCoachPlanPassed(payload?.coachPlan, {
+    requireReport: true,
+    action: '执行命令行 Garmin 同步'
+  });
+
+  const region = process.env.GARMIN_REGION || payload?.config?.region || 'cn';
+  const result = await syncCoachWorkoutsToGarmin(payload.coachPlan, {
+    days: opts.days ?? 5,
+    date: opts.date ?? null,
+    dryRun: Boolean(opts.dryRun),
+    requireValidatedPlan: true,
     auth: {
       region,
       email: process.env.GARMIN_EMAIL,
@@ -89,9 +112,17 @@ async function main() {
     }
   });
 
-  if (!result.dryRun && opts.saveSession && result.sessionTokens) {
-    await upsertEnvSessionJson(result.sessionTokens);
+  if (!result.dryRun && opts.saveSession !== false && result.sessionTokens) {
+    await upsertEnvSessionJson(result.sessionTokens, rootDir);
   }
+
+  return result;
+}
+
+async function main() {
+  await loadDotEnv(ROOT_DIR);
+  const opts = parseCliArgs(process.argv.slice(2));
+  const result = await runWorkoutSyncCli(opts, ROOT_DIR);
 
   console.log(
     JSON.stringify(
@@ -108,7 +139,10 @@ async function main() {
   );
 }
 
-main().catch((err) => {
-  console.error('[WorkoutSync Error]', err.message);
-  process.exit(1);
-});
+const isCliEntry = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+if (isCliEntry) {
+  main().catch((err) => {
+    console.error('[WorkoutSync Error]', err.message);
+    process.exit(1);
+  });
+}

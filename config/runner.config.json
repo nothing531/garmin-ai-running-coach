@@ -22,7 +22,7 @@
     "distanceKm": 0.8,
     "targetTime": "00:02:01",
     "raceDate": "2027-05-15",
-    "injuryNotes": "180cm/67kg，无现役伤病；曾因游泳诱发髂胫束综合征(ITBS)，靠墙静蹲可快速缓解；上肢/核心力量持续训练，下肢力量薄弱且已停跑14个月，前4周严控冲击跑量并强化臀中肌/股四等长-离心及小腿刚度"
+    "injuryNotes": "180cm/67kg，当前无现役伤病；历史备注：过往游泳曾现膝外侧不适（个人曾反馈靠墙静蹲耐受较好，非通用诊断或统一处方）；上肢/核心训练持续，下肢停跑14个月重启中，前4周温和重建有氧与下肢肌腱耐受"
   },
   "physiology": {
     "maxHr": 203,
@@ -31,10 +31,47 @@
     "ltPaceSecPerKm": 285,
     "weightKg": 67
   },
-  "llm": {
-    "provider": "openai_compatible",
-    "baseUrl": "https://api.deepseek.com/v1",
-    "model": "deepseek-chat",
-    "temperature": 0.3
+  "physiologyMeta": {
+    "maxHr": {
+      "value": 203,
+      "measuredDate": "2025-04-19",
+      "method": "过往场地高强跑设备峰值记录近似",
+      "source": "garmin_historical",
+      "confidence": "historical_anchor"
+    },
+    "restingHrBaseline": {
+      "value": 52,
+      "measuredDate": "2026-11-16",
+      "method": "Garmin 7日睡眠静息心率均值",
+      "source": "garmin_wellness",
+      "confidence": "device_estimate"
+    },
+    "lthr": {
+      "value": 183,
+      "measuredDate": "2025-04-19",
+      "method": "Garmin 设备自动估算（非血乳酸实测）",
+      "source": "garmin_device",
+      "confidence": "device_estimate"
+    },
+    "ltPace": {
+      "valueSecPerKm": 285,
+      "measuredDate": null,
+      "method": "停跑14个月复训期暂定经验推算（W4 3000m 亚极量测试仅用于恢复与配速-心率观察，不作公式标定）",
+      "source": "coach_heuristic",
+      "confidence": "heuristic_estimate"
+    },
+    "easyHrCeiling": {
+      "value": 156,
+      "measuredDate": "2026-11-18",
+      "method": "基于 LTHR 183 / MaxHR 203 与 2026-11-18 跑步机呼吸对话实测反馈，由 152 放宽至 156 bpm（个人暂定上限，非实验室实测 LT1；160 bpm 略喘作黄线参考，须配合完整对话与自然跑姿执行）",
+      "source": "personal_tentative",
+      "confidence": "heuristic_estimate"
+    },
+    "capacityTests": {
+      "latestObservationTest": null,
+      "latestMasTest": null,
+      "latestMssTest": null,
+      "note": "恢复观察测试与全力能力标定测试严格分开；尚未完成有效全力场地 MAS 与直线冲刺 MSS 测定，当前亚型待定"
+    }
   }
 }

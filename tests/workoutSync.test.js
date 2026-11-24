@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import GarminConnectModule from '@likenttt/garmin-connect';
 import {
   buildGarminWorkoutFromDay,
   buildPaceSpeedRange,
@@ -81,4 +82,95 @@ test('syncCoachWorkoutsToGarmin dryRun 正确筛选未来窗口内跑步课表',
   assert.equal(res.synced.length, 2);
   assert.equal(res.skipped.length, 2);
   assert.equal(res.synced[0].workoutName, '[AI] 11-14 3.2km 唤醒跑');
+});
+
+test('buildGarminWorkoutFromDay 精确保留 20m 短冲、0 秒休息与纯时长轻松跑', async () => {
+  assert.deepEqual(parseIntervalSpec('4×20m 飞行冲刺跑'), { count: 4, meters: 20 });
+  assert.equal(parseRestSeconds('组休 0s', 90), 0);
+
+  // 1) 20m 飞行跑 + 0s 休息不得变成 30m 或 90s/15s
+  const flyingSprint = buildGarminWorkoutFromDay({
+    date: '2026-11-18',
+    type: 'R',
+    title: '20m 飞行跑测试',
+    plannedDistanceKm: 0.88,
+    steps: [
+      { kind: 'warmup', distanceKm: 0.8, durationMin: 5, description: '热身慢跑' },
+      { kind: 'interval', reps: 4, distanceMeters: 20, restSec: 0, description: '20m 飞行冲刺' }
+    ]
+  });
+  assert.ok(flyingSprint);
+  const sprintSteps = flyingSprint.workoutSegments[0].workoutSteps;
+  const repeatGroup = sprintSteps.find((s) => s.type === 'RepeatGroupDTO');
+  assert.ok(repeatGroup);
+  assert.equal(repeatGroup.numberOfIterations, 4);
+  assert.equal(repeatGroup.workoutSteps[0].endConditionValue, 20);
+  assert.equal(repeatGroup.workoutSteps.length, 1); // 0s rest -> 无多余 recovery 步骤
+
+  // 2) 仅按时长安排的 30 分钟轻松跑不得被跳过，且转为 time 条件 1800s
+  const timedEasyDay = {
+    date: '2026-11-19',
+    type: 'E',
+    title: '30分钟轻松跑',
+    plannedDistanceKm: 0,
+    plannedDurationMin: 30,
+    targetHr: '136-150 bpm',
+    steps: [{ kind: 'steady', durationMin: 30, targetHr: '136-150 bpm', description: '30分钟有氧轻松跑' }]
+  };
+  const timedWorkout = buildGarminWorkoutFromDay(timedEasyDay);
+  assert.ok(timedWorkout);
+  const timedSteps = timedWorkout.workoutSegments[0].workoutSteps;
+  assert.equal(timedSteps.length, 1);
+  assert.equal(timedSteps[0].endCondition.conditionTypeKey, 'time');
+  assert.equal(timedSteps[0].endConditionValue, 1800);
+
+  const syncRes = await syncCoachWorkoutsToGarmin({ days: [timedEasyDay] }, { days: 1, dryRun: true });
+  assert.equal(syncRes.synced.length, 1);
+  assert.equal(syncRes.skipped.length, 0);
+});
+
+test('Garmin 排期失败时保留旧课，成功后仅替换日期窗口内的看板课表', async (t) => {
+  const { prototype } = GarminConnectModule.GarminConnect;
+  const operations = [];
+  let scheduleFails = true;
+  t.mock.method(prototype, 'loadToken', () => {});
+  t.mock.method(prototype, 'exportToken', () => ({}));
+  t.mock.method(prototype, 'getWorkouts', async function (_start, limit) {
+    this.client.post = async (_url, { date }) => {
+      operations.push(`schedule:${date}`);
+      if (scheduleFails) throw new Error('network failure');
+      return { workoutScheduleId: 42 };
+    };
+    return limit === 1 ? [] : [
+      { workoutId: 1, workoutName: '[AI] 11-18 旧跑步课' },
+      { workoutId: 2, workoutName: '[AI] 11-19 改为休息的旧课' },
+      { workoutId: 3, workoutName: '11-18 自建跑步课' },
+      { workoutId: 4, workoutName: '[AI] 11-24 窗口之外' }
+    ];
+  });
+  t.mock.method(prototype, 'addWorkout', async ({ workoutName }) => {
+    operations.push('create:5');
+    return { workoutId: 5, workoutName };
+  });
+  t.mock.method(prototype, 'deleteWorkout', async ({ workoutId }) => {
+    operations.push(`delete:${workoutId}`);
+  });
+  const plan = {
+    validationReport: { passed: true },
+    days: [
+      { date: '2026-11-18', type: 'E', plannedDistanceKm: 3.2, title: '轻松跑' },
+      { date: '2026-11-19', type: 'REST', plannedDistanceKm: 0, title: '休息' }
+    ]
+  };
+  const options = { requireValidatedPlan: true, auth: { sessionJson: { oauth1: {}, oauth2: {} } } };
+
+  await assert.rejects(() => syncCoachWorkoutsToGarmin(plan, options), /Garmin 排期失败/);
+  assert.deepEqual(operations, ['create:5', 'schedule:2026-11-18', 'delete:5']);
+
+  scheduleFails = false;
+  operations.length = 0;
+  const result = await syncCoachWorkoutsToGarmin(plan, options);
+  assert.deepEqual(operations, ['create:5', 'schedule:2026-11-18', 'delete:1', 'delete:2']);
+  assert.equal(result.synced[0].workoutScheduleId, 42);
+  assert.equal(result.deletedCount, 2);
 });

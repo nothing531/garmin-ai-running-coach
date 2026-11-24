@@ -96,7 +96,7 @@ export async function fetchEnvironmentForecast(locationConfig, options = {}) {
   ]);
 
   if (!weatherRes || !weatherRes.ok) {
-    return fetchWttrFallback(loc, { preferredRunHour, days });
+    return fetchWttrFallback(loc, { preferredRunHour, timezone, days });
   }
   const weather = await weatherRes.json();
   const aqi = aqiRes && aqiRes.ok ? await aqiRes.json() : null;
@@ -155,6 +155,10 @@ export async function fetchEnvironmentForecast(locationConfig, options = {}) {
     });
   }
 
+  if (dailyList.length === 0) {
+    throw new Error('Open-Meteo returned empty forecast');
+  }
+
   return {
     location: {
       city: loc.city,
@@ -198,7 +202,7 @@ function round1(v) {
   return typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 10) / 10 : null;
 }
 
-async function fetchWttrFallback(loc, { preferredRunHour = 6, days = 7 }) {
+async function fetchWttrFallback(loc, { preferredRunHour = 6, timezone = 'Asia/Shanghai', days = 7 }) {
   const url = `https://wttr.in/${loc.latitude},${loc.longitude}?format=j1`;
   const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) {

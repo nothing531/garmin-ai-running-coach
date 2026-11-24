@@ -106,7 +106,7 @@ test('deterministic coach plan and HTML dashboard render safely', () => {
   assert.equal(coachPlan.days.length, 7);
   assert.equal(coachPlan.days[0].type, 'REST'); // 红灯强制熔断今日训练
 
-  const html = renderDashboardHtml({
+  const publicHtml = renderDashboardHtml({
     generatedAt: '2026-11-14 16:20:00',
     dataSource: 'unit_test',
     config,
@@ -121,9 +121,27 @@ test('deterministic coach plan and HTML dashboard render safely', () => {
     coachPlan
   });
 
-  assert.ok(html.includes('AI Running Coach'));
-  assert.ok(html.includes('pmcChart'));
-  assert.ok(html.includes('红灯'));
+  assert.ok(publicHtml.includes('AI Running Coach'));
+  assert.ok(publicHtml.includes('auth-gate'));
+  assert.ok(!publicHtml.includes('红灯熔断'));
+
+  const privateHtml = renderDashboardHtml({
+    generatedAt: '2026-11-14 16:20:00',
+    dataSource: 'unit_test',
+    config,
+    wellness,
+    readiness,
+    pmc,
+    weeklyZones,
+    lastKeyWorkoutAudit: null,
+    envForecast: { location: { city: '北京' }, daily: [envToday] },
+    envToday,
+    envAdjustmentToday: computeEnvironmentalAdjustment(envToday),
+    coachPlan
+  }, { includePrivate: true });
+
+  assert.ok(privateHtml.includes('pmcChart'));
+  assert.ok(privateHtml.includes('红灯'));
 });
 
 test('parsePaceSecPerKm parses pace strings and numbers cleanly', () => {

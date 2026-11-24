@@ -47,10 +47,6 @@ jobs:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           GARMIN_SESSION_JSON: ${{ secrets.GARMIN_SESSION_JSON }}
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-          LLM_PROVIDER: ${{ secrets.LLM_PROVIDER || 'openai_compatible' }}
-          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL || 'https://api.deepseek.com/v1' }}
-          LLM_MODEL: ${{ secrets.LLM_MODEL || 'deepseek-chat' }}
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
           WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
           DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}

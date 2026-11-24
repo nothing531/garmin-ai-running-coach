@@ -56,12 +56,20 @@ function normalizePersonalActivity(a) {
   };
 }
 
-function extractBodyBatteryLatest(reports) {
-  if (!Array.isArray(reports) || reports.length === 0) return null;
-  const latest = reports[reports.length - 1];
-  const rows = latest?.bodyBatteryValuesArray;
-  const desc = latest?.bodyBatteryValueDescriptorDTOList;
-  if (!Array.isArray(rows) || rows.length === 0) return null;
+function extractBodyBatteryWithMeta(reports, preferredDate) {
+  if (!Array.isArray(reports) || reports.length === 0) {
+    return { value: null, date: null, source: 'missing' };
+  }
+  const exact = preferredDate
+    ? reports.find((r) => String(r?.date || '').slice(0, 10) === preferredDate)
+    : null;
+  const target = exact || reports[reports.length - 1];
+  const targetDate = target?.date ? String(target.date).slice(0, 10) : null;
+  const rows = target?.bodyBatteryValuesArray;
+  const desc = target?.bodyBatteryValueDescriptorDTOList;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { value: null, date: targetDate, source: 'missing' };
+  }
 
   let levelIdx = 1;
   if (Array.isArray(desc)) {
@@ -80,7 +88,20 @@ function extractBodyBatteryLatest(reports) {
       if (maxMorning === null || v > maxMorning) maxMorning = v;
     }
   }
-  return maxMorning ?? lastVal;
+  const value = maxMorning ?? lastVal;
+  if (!Number.isFinite(value)) {
+    return { value: null, date: targetDate, source: 'missing' };
+  }
+  const isFresh = preferredDate ? targetDate === preferredDate : true;
+  return {
+    value,
+    date: targetDate,
+    source: isFresh ? 'measured' : 'stale_cache'
+  };
+}
+
+function extractBodyBatteryLatest(reports) {
+  return extractBodyBatteryWithMeta(reports, null).value;
 }
 
 /**
@@ -178,31 +199,45 @@ async function fetchViaPersonalApi({ apiKey, region, baseUrl, physiology }) {
     client.getHeartRateZones().catch(() => null)
   ]);
 
-  const sleep = sleepToday?.sleepTimeSeconds ? sleepToday : sleepYesterday;
+  const hasSleepToday = Boolean(sleepToday?.sleepTimeSeconds);
+  const hasSleepYesterday = Boolean(sleepYesterday?.sleepTimeSeconds);
+  const sleep = hasSleepToday ? sleepToday : hasSleepYesterday ? sleepYesterday : null;
+  const sleepDate = hasSleepToday ? today : hasSleepYesterday ? yesterday : null;
+  const sleepSource = hasSleepToday ? 'measured' : hasSleepYesterday ? 'stale_cache' : 'missing';
+
   const hrvList = hrvRange?.hrvSummaries || [];
   const latestHrv = hrvList[hrvList.length - 1] || null;
+  const hrvDate = latestHrv?.calendarDate ? String(latestHrv.calendarDate).slice(0, 10) : null;
+  const hrvTodayVal = typeof latestHrv?.lastNightAvg === 'number' ? latestHrv.lastNightAvg : null;
+  const hrvSource =
+    hrvTodayVal == null ? 'missing' : hrvDate === today ? 'measured' : 'stale_cache';
   const hrvValues = hrvList.map((h) => h.lastNightAvg).filter((v) => typeof v === 'number');
   const hrv7dAvg =
-    latestHrv?.weeklyAvg ||
+    latestHrv?.weeklyAvg ??
     (hrvValues.length > 0
       ? Math.round(hrvValues.slice(-7).reduce((a, b) => a + b, 0) / Math.min(7, hrvValues.length))
       : null);
 
-  const rhrToday =
-    hrToday?.restingHeartRate ??
-    summaryToday?.restingHeartRate ??
-    hrWeek?.restingHeartRate ??
-    physiology.restingHrBaseline ??
-    50;
+  const hasRhrToday = typeof hrToday?.restingHeartRate === 'number' || typeof summaryToday?.restingHeartRate === 'number';
+  const hasRhrYesterday = typeof hrWeek?.restingHeartRate === 'number';
+  const rhrToday = hasRhrToday
+    ? (hrToday?.restingHeartRate ?? summaryToday?.restingHeartRate)
+    : hasRhrYesterday
+      ? hrWeek.restingHeartRate
+      : null;
+  const rhrDate = hasRhrToday ? today : hasRhrYesterday ? yesterday : null;
+  const rhrSource = hasRhrToday ? 'measured' : hasRhrYesterday ? 'stale_cache' : 'missing';
   const rhr7dAvg =
     hrToday?.lastSevenDaysAvgRestingHeartRate ??
     hrWeek?.lastSevenDaysAvgRestingHeartRate ??
-    rhrToday;
+    null;
 
   const sleepScore =
     sleep?.sleepScores?.overall?.value ??
     sleep?.sleepScores?.total?.value ??
     null;
+
+  const bbMeta = extractBodyBatteryWithMeta(bbReports, today);
 
   const latestWeightG = weightRange?.totalAverage?.weight ?? weightRange?.previousDateWeight?.weight;
   const weightKg = latestWeightG ? Math.round((latestWeightG / 1000) * 10) / 10 : physiology.weightKg;
@@ -238,7 +273,7 @@ async function fetchViaPersonalApi({ apiKey, region, baseUrl, physiology }) {
     lastKeyWorkoutAudit,
     wellness: {
       date: today,
-      hrvToday: latestHrv?.lastNightAvg ?? null,
+      hrvToday: hrvTodayVal,
       hrv7dAvg,
       hrvStatus: latestHrv?.status ?? null,
       hrvBaselineLow: latestHrv?.baseline?.balancedLow ?? null,
@@ -252,12 +287,19 @@ async function fetchViaPersonalApi({ apiKey, region, baseUrl, physiology }) {
       lightSleepMin: sleep?.lightSleepSeconds ? Math.round(sleep.lightSleepSeconds / 60) : null,
       avgSpO2: sleep?.averageSpO2Value ?? null,
       avgRespiration: sleep?.averageRespirationValue ?? null,
-      bodyBatteryMorning: extractBodyBatteryLatest(bbReports),
+      bodyBatteryMorning: bbMeta.value,
       stepsToday: summaryToday?.totalSteps ?? null,
       weightKg,
       lthrFromDevice: runZoneConfig?.lactateThresholdHeartRate ?? physiology.lthr,
       maxHrFromDevice: runZoneConfig?.maxHeartRateUsed ?? physiology.maxHr,
-      vo2Max: null
+      vo2Max: null,
+      provenance: {
+        hrv: { source: hrvSource, date: hrvDate },
+        rhr: { source: rhrSource, date: rhrDate },
+        sleep: { source: sleepSource, date: sleepDate },
+        bodyBattery: { source: bbMeta.source, date: bbMeta.date },
+        weight: { source: latestWeightG ? 'measured' : 'config_baseline', date: latestWeightG ? today : null }
+      }
     }
   };
 }
@@ -304,11 +346,24 @@ async function fetchViaConnectSession({ region, physiology }) {
       gc.getMaxMetrics(todayDateObj).catch(() => null)
     ]);
 
-  const sleepDto = sleepToday?.dailySleepDTO?.sleepTimeSeconds
-    ? sleepToday.dailySleepDTO
-    : sleepYesterday?.dailySleepDTO || sleepToday || sleepYesterday;
+  const hasSleepToday = Boolean(sleepToday?.dailySleepDTO?.sleepTimeSeconds ?? sleepToday?.sleepTimeSeconds);
+  const hasSleepYesterday = Boolean(sleepYesterday?.dailySleepDTO?.sleepTimeSeconds ?? sleepYesterday?.sleepTimeSeconds);
+  const sleepDto = hasSleepToday
+    ? (sleepToday?.dailySleepDTO || sleepToday)
+    : hasSleepYesterday
+      ? (sleepYesterday?.dailySleepDTO || sleepYesterday)
+      : null;
+  const yesterday = isoDateOffset(1);
+  const sleepDate = hasSleepToday ? today : hasSleepYesterday ? yesterday : null;
+  const sleepSource = hasSleepToday ? 'measured' : hasSleepYesterday ? 'stale_cache' : 'missing';
 
   const hrvSummary = hrvData?.hrvSummary || hrvSummaries?.hrvSummaries?.slice(-1)?.[0] || null;
+  const hrvDate = hrvSummary?.calendarDate ? String(hrvSummary.calendarDate).slice(0, 10) : null;
+  const hrvTodayVal = typeof hrvSummary?.lastNightAvg === 'number' ? hrvSummary.lastNightAvg : null;
+  const hrvSource = hrvTodayVal == null ? 'missing' : hrvDate === today ? 'measured' : 'stale_cache';
+  const rhrTodayVal = typeof hrToday?.restingHeartRate === 'number' ? hrToday.restingHeartRate : null;
+  const rhr7dAvgVal = typeof hrToday?.lastSevenDaysAvgRestingHeartRate === 'number' ? hrToday.lastSevenDaysAvgRestingHeartRate : null;
+  const bbMeta = extractBodyBatteryWithMeta(bbReports, today);
   const keyRuns = selectKeyRunsForFit(activities);
   let lastKeyWorkoutAudit = null;
 
@@ -343,13 +398,13 @@ async function fetchViaConnectSession({ region, physiology }) {
     lastKeyWorkoutAudit,
     wellness: {
       date: today,
-      hrvToday: hrvSummary?.lastNightAvg ?? null,
+      hrvToday: hrvTodayVal,
       hrv7dAvg: hrvSummary?.weeklyAvg ?? null,
       hrvStatus: hrvSummary?.status ?? null,
       hrvBaselineLow: hrvSummary?.baseline?.balancedLow ?? null,
       hrvBaselineHigh: hrvSummary?.baseline?.balancedUpper ?? null,
-      rhrToday: hrToday?.restingHeartRate ?? physiology.restingHrBaseline,
-      rhr7dAvg: hrToday?.lastSevenDaysAvgRestingHeartRate ?? physiology.restingHrBaseline,
+      rhrToday: rhrTodayVal,
+      rhr7dAvg: rhr7dAvgVal,
       sleepScore: sleepDto?.sleepScores?.overall?.value ?? null,
       sleepHours: sleepDto?.sleepTimeSeconds ? Math.round((sleepDto.sleepTimeSeconds / 3600) * 10) / 10 : null,
       deepSleepMin: sleepDto?.deepSleepSeconds ? Math.round(sleepDto.deepSleepSeconds / 60) : null,
@@ -357,12 +412,19 @@ async function fetchViaConnectSession({ region, physiology }) {
       lightSleepMin: sleepDto?.lightSleepSeconds ? Math.round(sleepDto.lightSleepSeconds / 60) : null,
       avgSpO2: sleepDto?.averageSpO2Value ?? null,
       avgRespiration: sleepDto?.averageRespirationValue ?? null,
-      bodyBatteryMorning: extractBodyBatteryLatest(bbReports),
+      bodyBatteryMorning: bbMeta.value,
       stepsToday: null,
       weightKg: physiology.weightKg,
       lthrFromDevice: physiology.lthr,
       maxHrFromDevice: physiology.maxHr,
-      vo2Max: maxMetrics?.[0]?.generic?.vo2MaxValue ?? null
+      vo2Max: maxMetrics?.[0]?.generic?.vo2MaxValue ?? null,
+      provenance: {
+        hrv: { source: hrvSource, date: hrvDate },
+        rhr: { source: rhrTodayVal != null ? 'measured' : 'missing', date: rhrTodayVal != null ? today : null },
+        sleep: { source: sleepSource, date: sleepDate },
+        bodyBattery: { source: bbMeta.source, date: bbMeta.date },
+        weight: { source: 'config_baseline', date: null }
+      }
     }
   };
 }
@@ -525,7 +587,14 @@ export function generateDemoTelemetry(config = {}) {
       weightKg: physiology.weightKg,
       lthrFromDevice: physiology.lthr,
       maxHrFromDevice: physiology.maxHr,
-      vo2Max: 54
+      vo2Max: 54,
+      provenance: {
+        hrv: { source: 'demo', date: isoDateOffset(0) },
+        rhr: { source: 'demo', date: isoDateOffset(0) },
+        sleep: { source: 'demo', date: isoDateOffset(0) },
+        bodyBattery: { source: 'demo', date: isoDateOffset(0) },
+        weight: { source: 'config_baseline', date: null }
+      }
     }
   };
 }
