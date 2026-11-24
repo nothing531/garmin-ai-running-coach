@@ -10,4 +10,5 @@
 - **Workout Calendar Sync**: Whenever `config/custom-plan.json` changes future running targets or swaps training days, also sync structured workouts to Garmin Connect — preferably on `huawei-sg` with IPv4 flags to avoid mainland China `thegarth.s3.amazonaws.com` failures and Node Happy Eyeballs cross-border `ETIMEDOUT`/`ENETUNREACH`: `ssh huawei-sg 'cd /opt/garmin-coach && node --no-network-family-autoselection --dns-result-order=ipv4first scripts/sync-workouts.js --days 5'` (or `--date YYYY-MM-DD` for targeted days).
 
 ## 2. Coaching Skill Activation
-- For any 800m training analysis, interval prescription, recovery/readiness gating, or injury/symptom guidance, load and follow `.agents/skills/800m-running-coach/SKILL.md`.
+- For any **800m** training analysis, interval prescription, ASR/SRR estimation, or track recovery gating, load and follow `.agents/skills/800m-running-coach/SKILL.md`.
+- For any **3K / 5K / 10K / Half Marathon / Full Marathon** training plan, VDOT/Riegel pace calibration, threshold/marathon-pace progression, aerobic durability, fueling/gut-training, or pre-race taper guidance, load and follow `.agents/skills/distance-running-coach/SKILL.md`.

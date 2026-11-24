@@ -1,10 +1,27 @@
-# AI Running Coach · 佳明全自动私人跑步教练（GitHub Actions + Pages 版）
+# AI Running Coach · 全距离科学跑步 AI 私人教练（800m · 3K · 5K · 10K · 半马 · 全马）
 
-无需 24 小时开机，也无需租用云服务器。每天早上 06:30（北京时间）在 GitHub 云端自动运行 1 分钟：
-1. 拉取 **Garmin Connect（支持 `.cn` 中国区与 `.com` 国际区）** 最近 8–12 周运动记录、`.FIT` 原始遥测、昨夜睡眠、HRV、静息心率与身体电量；
-2. 免费拉取 **Open-Meteo** 当日及未来 7 天训练时段天气（气温、湿度、露点、风速、海拔与 AQI 空气质量）；
-3. 读取既定课表，按训练负荷、体感打卡、晨间恢复和天气规则校验并调整当天安排；
-4. 渲染单文件交互式暗色看板 `dist/index.html` 发布到 **GitHub Pages**，并自动推送到 **飞书 / 企业微信 / 钉钉 / 微信 Server酱 / iOS Bark**。
+无需 24 小时开机，支持 **GitHub Actions + Pages 零成本部署** 或 **私有服务器自部署**。每天早上 06:30（北京时间）自动运行：
+1. 拉取 **Garmin Connect（支持 `.cn` 中国区与 `.com` 国际区）** 最近 8–12 周运动记录、标准 `.FIT` 原始遥测、昨夜睡眠、HRV、静息心率与身体电量；
+2. 免费拉取 **Open-Meteo** 当日及未来 7 天训练时段天气（气温、湿度、露点、风速、海拔与 AQI 空气质量），自动计算气象配速修正；
+3. 基于内置 **全距离运动科学知识库（`knowledge/`）与双 Agent Skills（`.agents/skills/`）**，结合晨间恢复、体感打卡与 PMC 负荷（CTL / ATL / TSB）校验并调整每日课表，支持一键推送结构化课表到 Garmin 手表日历；
+4. 渲染响应式桌面端 + 手机端双主题（晨间纸白 / 夜训赛道）交互式看板 `dist/index.html`，并自动推送到 **飞书 / 企业微信 / 钉钉 / 微信 Server酱 / iOS Bark**。
+
+---
+
+## 内置全距离知识库与 Agent Skills
+
+| 覆盖距离 | 科学知识库（`knowledge/`） | Workspace Skill（`.agents/skills/`） | 配套配速/补给计算 CLI |
+|---|---|---|---|
+| **3K / 5K / 10K / 半马 / 全马** | [distance-training-bible.md](./knowledge/distance-training-bible.md) · [distance-session-catalog.md](./knowledge/distance-session-catalog.md) | [distance-running-coach](./.agents/skills/distance-running-coach/SKILL.md) | [distance_pace_calc.mjs](./.agents/skills/distance-running-coach/scripts/distance_pace_calc.mjs) |
+| **800m 中距离专项** | [800m-interval-bible.md](./knowledge/800m-interval-bible.md) · [interval-session-catalog.md](./knowledge/interval-session-catalog.md) | [800m-running-coach](./.agents/skills/800m-running-coach/SKILL.md) | [asr_800m_calc.mjs](./.agents/skills/800m-running-coach/scripts/asr_800m_calc.mjs) |
+| **通用底层与文献档案** | [polarized-training-bible.md](./knowledge/polarized-training-bible.md) · [evidence-notes.md](./knowledge/evidence-notes.md) · [knowledge/README.md](./knowledge/README.md) | 证据分层（`[论文结果]` / `[教练经验]` / `[程序估算]` / `[安全边界]`） | 17 篇归档论文 + 同行评审 Meta 索引 |
+
+### 配速、气象与补给计算 CLI 示例（3K–全马）
+```bash
+# 例：近期 10K 全力 41:30，备赛全马（周跑量 55km，体重 65kg，气温 22°C / 湿度 68%）
+node .agents/skills/distance-running-coach/scripts/distance_pace_calc.mjs \
+  --race-km 10 --time 41:30 --target-km 42.195 --weekly-km 55 --weight-kg 65 --temp-c 22 --humidity 68
+```
 
 ---
 
